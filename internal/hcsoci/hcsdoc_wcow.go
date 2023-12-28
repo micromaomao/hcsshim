@@ -26,7 +26,6 @@ import (
 	"github.com/Microsoft/hcsshim/internal/processorinfo"
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/internal/uvmfolder"
-	"github.com/Microsoft/hcsshim/internal/wclayer"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 )
@@ -67,7 +66,7 @@ func createMountsConfig(ctx context.Context, coi *createOptionsInternal) (*mount
 				// about the isolated case.
 				src, err := fs.ResolvePath(mount.Source)
 				if err != nil {
-					return nil, fmt.Errorf("failed to resolve path for mount source %q: %s", mount.Source, err)
+					return nil, fmt.Errorf("failed to resolve path for mount source %q: %w", mount.Source, err)
 				}
 				mdv2.HostPath = src
 			} else if mount.Type == MountTypeVirtualDisk || mount.Type == MountTypePhysicalDisk || mount.Type == MountTypeExtensibleVirtualDisk {
@@ -245,7 +244,16 @@ func createWindowsContainerDocument(ctx context.Context, coi *createOptionsInter
 	// Memory Resources
 	memoryMaxInMB := oci.ParseAnnotationsMemory(ctx, coi.Spec, annotations.ContainerMemorySizeInMB, 0)
 	if memoryMaxInMB > 0 {
-		v1.MemoryMaximumInMB = int64(memoryMaxInMB)
+		if memoryMaxInMB > math.MaxInt64 {
+			v1.MemoryMaximumInMB = math.MaxInt64
+			log.G(ctx).WithFields(logrus.Fields{
+				"annotation":       annotations.ContainerMemorySizeInMB,
+				"oldMemoryMaxInMB": memoryMaxInMB,
+				"newMemoryMaxInMB": v1.MemoryMaximumInMB,
+			}).Debug("container memory size limit exceeds maximum value allowed in v1 HCS schema")
+		} else {
+			v1.MemoryMaximumInMB = int64(memoryMaxInMB)
+		}
 		v2Container.Memory = &hcsschema.Memory{
 			SizeInMB: memoryMaxInMB,
 		}
@@ -345,13 +353,13 @@ func createWindowsContainerDocument(ctx context.Context, coi *createOptionsInter
 	}
 
 	if coi.isV2Argon() || coi.isV1Argon() { // Argon v1 or v2
-		for _, layerPath := range coi.Spec.Windows.LayerFolders[:len(coi.Spec.Windows.LayerFolders)-1] {
-			layerID, err := wclayer.LayerID(ctx, layerPath)
-			if err != nil {
-				return nil, nil, err
-			}
-			v1.Layers = append(v1.Layers, schema1.Layer{ID: layerID.String(), Path: layerPath})
-			v2Container.Storage.Layers = append(v2Container.Storage.Layers, hcsschema.Layer{Id: layerID.String(), Path: layerPath})
+		mountedLayers, err := layers.ToHostHcsSchemaLayers(ctx, coi.ID, coi.Spec.Windows.LayerFolders[:len(coi.Spec.Windows.LayerFolders)-1])
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, ml := range mountedLayers {
+			v1.Layers = append(v1.Layers, schema1.Layer{ID: ml.Id, Path: ml.Path})
+			v2Container.Storage.Layers = append(v2Container.Storage.Layers, ml)
 		}
 	}
 
@@ -408,12 +416,12 @@ func createWindowsContainerDocument(ctx context.Context, coi *createOptionsInter
 	registryAdd := []hcsschema.RegistryValue{
 		{
 			Key: &hcsschema.RegistryKey{
-				Hive: "System",
+				Hive: hcsschema.RegistryHive_SYSTEM,
 				Name: "ControlSet001\\Control",
 			},
 			Name:        "WaitToKillServiceTimeout",
 			StringValue: strconv.Itoa(math.MaxInt32),
-			Type_:       "String",
+			Type_:       hcsschema.RegistryValueType_STRING,
 		},
 	}
 
@@ -444,21 +452,21 @@ func createWindowsContainerDocument(ctx context.Context, coi *createOptionsInter
 		registryAdd = append(registryAdd, []hcsschema.RegistryValue{
 			{
 				Key: &hcsschema.RegistryKey{
-					Hive: "Software",
+					Hive: hcsschema.RegistryHive_SOFTWARE,
 					Name: "Microsoft\\Windows\\Windows Error Reporting\\LocalDumps",
 				},
 				Name:        "DumpFolder",
 				StringValue: dumpPath,
-				Type_:       "String",
+				Type_:       hcsschema.RegistryValueType_STRING,
 			},
 			{
 				Key: &hcsschema.RegistryKey{
-					Hive: "Software",
+					Hive: hcsschema.RegistryHive_SOFTWARE,
 					Name: "Microsoft\\Windows\\Windows Error Reporting\\LocalDumps",
 				},
 				Name:       "DumpType",
 				DWordValue: dumpType,
-				Type_:      "DWord",
+				Type_:      hcsschema.RegistryValueType_D_WORD,
 			},
 			{
 				Key: &hcsschema.RegistryKey{
@@ -479,7 +487,7 @@ func createWindowsContainerDocument(ctx context.Context, coi *createOptionsInter
 }
 
 // parseAssignedDevices parses assigned devices for the container definition
-// this is currently supported for v2 argon and xenon only
+// this is currently supported for v2 argon and xenon only.
 func parseAssignedDevices(ctx context.Context, coi *createOptionsInternal, v2 *hcsschema.Container) error {
 	if !coi.isV2Argon() && !coi.isV2Xenon() {
 		return nil
@@ -513,7 +521,7 @@ func parseDumpCount(annots map[string]string) (int32, error) {
 		return 10, nil
 	}
 
-	dumpCount, err := strconv.Atoi(dmpCountStr)
+	dumpCount, err := strconv.ParseInt(dmpCountStr, 10, 32)
 	if err != nil {
 		return -1, err
 	}
@@ -526,7 +534,7 @@ func parseDumpCount(annots map[string]string) (int32, error) {
 // parseDumpType parses the passed in string representation of the local user mode process dump type to the
 // corresponding value the registry expects to be set.
 //
-// See DumpType at https://docs.microsoft.com/en-us/windows/win32/wer/collecting-user-mode-dumps for the mappings
+// See DumpType at https://docs.microsoft.com/en-us/windows/win32/wer/collecting-user-mode-dumps for the mappings.
 func parseDumpType(annots map[string]string) (int32, error) {
 	dmpTypeStr := annots[annotations.WCOWProcessDumpType]
 	switch dmpTypeStr {

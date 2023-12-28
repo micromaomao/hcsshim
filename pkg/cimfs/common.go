@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	// Equivalent to SDDL of "D:NO_ACCESS_CONTROL"
+	// Equivalent to SDDL of "D:NO_ACCESS_CONTROL".
 	nullSd = []byte{1, 0, 4, 128, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 )
 
@@ -77,7 +77,7 @@ func readFilesystemHeader(f *os.File) (format.FilesystemHeader, error) {
 	}
 
 	if err := validateHeader(&fsh.Common); err != nil {
-		return fsh, fmt.Errorf("validating filesystem header: %s", err)
+		return fsh, fmt.Errorf("validating filesystem header: %w", err)
 	}
 	return fsh, nil
 }
