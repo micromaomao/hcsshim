@@ -6,6 +6,7 @@ package cimfs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	"github.com/Microsoft/go-winio"
+	"github.com/Microsoft/go-winio/pkg/guid"
+	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"golang.org/x/sys/windows"
 )
 
@@ -26,7 +29,7 @@ type tuple struct {
 	isDir        bool
 }
 
-// A utility function to create a file/directory and write data to it in the given cim
+// A utility function to create a file/directory and write data to it in the given cim.
 func createCimFileUtil(c *CimFsWriter, fileTuple tuple) error {
 	// create files inside the cim
 	fileInfo := &winio.FileBasicInfo{
@@ -102,7 +105,12 @@ func TestCimReadWrite(t *testing.T) {
 	}
 
 	// mount and read the contents of the cim
-	mountvol, err := Mount(cimPath)
+	volumeGUID, err := guid.NewV4()
+	if err != nil {
+		t.Fatalf("generate cim mount GUID: %s", err)
+	}
+
+	mountvol, err := Mount(cimPath, volumeGUID, hcsschema.CimMountFlagCacheFiles)
 	if err != nil {
 		t.Fatalf("mount cim : %s", err)
 	}
@@ -129,7 +137,7 @@ func TestCimReadWrite(t *testing.T) {
 
 			// it is a file - read contents
 			rc, err := f.Read(fileContents)
-			if err != nil && err != io.EOF {
+			if err != nil && !errors.Is(err, io.EOF) {
 				t.Fatalf("failure while reading file %s from cim: %s", ft.filepath, err)
 			} else if rc != len(ft.fileContents) {
 				t.Fatalf("couldn't read complete file contents for file: %s, read %d bytes, expected: %d", ft.filepath, rc, len(ft.fileContents))

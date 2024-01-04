@@ -16,16 +16,6 @@ jobs:
       matrix:
         goos: [windows, linux]
         root: ["", test] # cannot specify "./... ./test/..." unless in go workspace
-        include:
-          - goos: linux
-            root: ""
-            dirs: >-
-              ./cmd/gcs/...
-              ./cmd/gcstools/...
-              ./internal/guest...
-              ./internal/tools/...
-              ./pkg/...
-              ./ext4/...
 
     steps:
       - name: Checkout
@@ -34,7 +24,7 @@ jobs:
           show-progress: false
 
       - name: Install go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           # sometimes go cache causes issues when linting
@@ -43,15 +33,15 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v3
         with:
-          version: v1.52
+          version: v1.54
           args: >-
             --verbose
             --max-issues-per-linter=0
             --max-same-issues=0
             --modules-download-mode=readonly
             --timeout=10m
-            ${{ matrix.dirs }}
-          working-directory: ${{ matrix.root }}
+            --config=${{ github.workspace }}/.golangci.yml
+          working-directory: ${{ github.workspace }}/${{ matrix.root }}
         env:
           GOOS: ${{ matrix.goos }}
 
@@ -72,7 +62,7 @@ jobs:
           show-progress: false
 
       - name: Install go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: |
@@ -139,7 +129,7 @@ jobs:
           show-progress: false
 
       - name: Install go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: |
@@ -214,7 +204,7 @@ jobs:
           show-progress: false
 
       - name: Install go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: |
@@ -248,6 +238,27 @@ jobs:
             exit $LASTEXITCODE
           }
 
+      - name: Validate go generate in test
+        shell: powershell
+        working-directory: test
+        run: |
+          Write-Output "::group::go generate"
+          go generate -x .\...
+          Write-Output "::endgroup::"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error title=Go Generate::Error running go generate."
+            exit $LASTEXITCODE
+          }
+
+          git add --all --intent-to-add .
+          Write-Output "::group::git diff"
+          git diff --stat --exit-code
+          Write-Output "::endgroup::"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "::error ::Generated files are not up to date. Please run ``go generate .\...`` from within ``./test``."
+            exit $LASTEXITCODE
+          }
+
   test-linux:
     needs: [lint, protos, verify-vendor, go-gen]
     runs-on: ubuntu-latest
@@ -258,7 +269,7 @@ jobs:
           show-progress: false
 
       - name: Install go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: |
@@ -298,7 +309,7 @@ jobs:
           show-progress: false
 
       - name: Install go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: |
@@ -340,7 +351,7 @@ jobs:
         run: go build -mod=mod -o sample-logging-driver.exe ./cri-containerd/helpers/log.go
         working-directory: test
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: ${{ github.event_name == 'pull_request' }}
         with:
           name: test_binaries_${{ matrix.os }}
@@ -367,7 +378,7 @@ jobs:
           show-progress: false
 
       - name: Install go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
@@ -574,7 +585,7 @@ jobs:
           show-progress: false
 
       - name: Install go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: |
@@ -610,7 +621,7 @@ jobs:
       - run: go build ./internal/tools/uvmboot
       - run: go build ./internal/tools/zapdir
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: ${{ github.event_name == 'pull_request' }}
         with:
           name: binaries
@@ -639,7 +650,7 @@ jobs:
           show-progress: false
 
       - name: Install go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: |
