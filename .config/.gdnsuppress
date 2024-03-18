@@ -22,6 +22,34 @@
       "expirationDate": null,
       "type": null
     },
+    "a2e6cf9b2f322fb90f473d3128c424b843e7ed37db8ef76904cc4dd8c24ca4aa": {
+      "signature": "a2e6cf9b2f322fb90f473d3128c424b843e7ed37db8ef76904cc4dd8c24ca4aa",
+      "alternativeSignatures": [],
+      "target": "out/notices/github.com/veraison/go-cose/README.md",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "credscan",
+      "ruleId": "CSCAN-GENERAL0060",
+      "justification": "This is a false positive and not managed by Microsoft.",
+      "createdDate": "2021-06-18 22:27:56Z",
+      "expirationDate": null,
+      "type": null
+    },
+    "dfdfdc6e4adb2240e8d3cf962b6a2fc18cecc925f8a7423683312f8a1301f645": {
+      "signature": "dfdfdc6e4adb2240e8d3cf962b6a2fc18cecc925f8a7423683312f8a1301f645",
+      "alternativeSignatures": [],
+      "target": "vendor/github.com/veraison/go-cose/README.md",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "credscan",
+      "ruleId": "CSCAN-GENERAL0060",
+      "justification": "This is a false positive and not managed by Microsoft.",
+      "createdDate": "2021-06-18 22:27:56Z",
+      "expirationDate": null,
+      "type": null
+    },
     "874f59e712cfd9f6fae750452a2aa2bce8a39607ffadca2ea9a8f421bf0dd6f9": {
       "signature": "874f59e712cfd9f6fae750452a2aa2bce8a39607ffadca2ea9a8f421bf0dd6f9",
       "alternativeSignatures": [],

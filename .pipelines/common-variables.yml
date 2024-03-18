@@ -6,9 +6,11 @@
 variables:
   - template: .pipelines/templates/onebranch/images.yml@cplat
 
-  # override linux container image
+  # .pipelines/templates/build/go-licenses.yml@cplat will run in the default (Linux) container image,
+  # so override it to use the Go image
   - name: LinuxContainerImage
-    value: cdpxa0712bf275644e58a9d28a8053e650ba00.azurecr.io/official/containerplatform/linux/golang:ms-1.19.9
+    value: $(CPlatGolangLinuxContainerImage)
+
 
   # This needs to be removed when if we ever start building container images from this repository
   - name: DisableDockerDetector
