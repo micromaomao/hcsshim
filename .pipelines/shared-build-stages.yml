@@ -1,6 +1,8 @@
 # Build stages shared between Official, Buddy and nightly builds.
 # For nightly builds, parameters.Nightly will be set to True
+#
 # The parent template must include ContainerPlatform/ContainerPlatform repository with "cplat" alias
+
 parameters:
   - name: Nightly
     type: boolean
@@ -9,10 +11,6 @@ parameters:
 stages:
   - stage: build_repo
     jobs:
-      # Nightly builds use different versioning scheme
-      - ${{ if not(eq(parameters.Nightly, true))}}:
-          - template: .pipelines/templates/build/version.yml@cplat
-
       - job: build
         pool:
           type: linux
@@ -33,7 +31,11 @@ stages:
               echo "##[endgroup]"
             displayName: "📂 Show Environment"
 
-          - ${{ if eq(parameters.Nightly, true) }}:
+          # Nightly builds use different versioning scheme
+          - ${{ if not(parameters.Nightly) }}:
+              - template: .pipelines/templates/build/steps/version.yml@cplat
+
+          - ${{ if parameters.Nightly }}:
               - script: |
                   set -eux
 
