@@ -119,7 +119,7 @@ stages:
                 ncproxygrpc/v1/networkconfigproxy.proto
               targetFolder: "$(Build.StagingDirectory)/out"
             displayName: Copy ncproxygrpc api files
-          
+
           - task: CopyFiles@2
             inputs:
               sourceFolder: "pkg/ncproxy"
