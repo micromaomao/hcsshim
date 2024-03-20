@@ -130,6 +130,13 @@ stages:
                 nodenetsvc/v1/nodenetsvc.proto
               targetFolder: "$(Build.StagingDirectory)/out"
             displayName: Copy nodenetsvc api files
+            
+          - bash: | 
+              set -eoux
+
+              apt-get update
+              apt-get install -y libkmod-dev
+            displayName: Download dependencies for building init script
 
           - script: |
               set -eoux
