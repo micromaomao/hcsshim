@@ -13,15 +13,15 @@ require (
 	github.com/google/go-containerregistry v0.19.1
 	github.com/josephspurrier/goversioninfo v1.4.0
 	github.com/opencontainers/go-digest v1.0.0
-	github.com/opencontainers/image-spec v1.1.0-rc6
+	github.com/opencontainers/image-spec v1.1.0
 	github.com/opencontainers/runtime-spec v1.2.0
 	github.com/opencontainers/runtime-tools v0.9.1-0.20221107090550-2e043c6bd626
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.3
-	github.com/urfave/cli/v2 v2.25.7
+	github.com/urfave/cli/v2 v2.27.1
 	go.opencensus.io v0.24.0
-	golang.org/x/sync v0.6.0
-	golang.org/x/sys v0.18.0
+	golang.org/x/sync v0.7.0
+	golang.org/x/sys v0.19.0
 	google.golang.org/grpc v1.62.1
 	google.golang.org/protobuf v1.33.0
 	k8s.io/cri-api v0.27.1
