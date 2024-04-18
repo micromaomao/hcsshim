@@ -18,9 +18,24 @@ resources:
 extends:
   template: v2/OneBranch.Official.CrossPlat.yml@ob-templates
   parameters:
-    globalSdl:
+    globalSdl: # https://aka.ms/obpipelines/sdl
+      codeql: # https://aka.ms/codeql3000-faq
+        compiled:
+          enabled: true
+        buildIdentifier: hcsshim
+        cadence: 72
+        excludePathPatterns: "vendor,test"
+        language: go
+
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
         suppressionSet: default
+
+      sourcesAnalysisStage:
+        enabled: true
+
+      sbom:
+        enabled: true
+
     stages:
       - template: shared-build-stages.yml@self
