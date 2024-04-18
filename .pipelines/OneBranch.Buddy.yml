@@ -1,8 +1,26 @@
 trigger:
   - main
 
+schedules:
+  # run weekly (7PM PST Friday) to:
+  # - build latest go version
+  # - check for breaking changes from OneBranch pipeline and infrastructure
+  # - keep CodeQL up to date
+  - cron: "0 2 * * 6"
+    displayName: Weekly Build
+    branches:
+      include:
+        - main
+    always: true
+
 variables:
   - template: common-variables.yml@self
+
+
+  # Run local analysis on PR branches (won't upload to database)
+  # https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/codeql/codeql-codeql3000-faq#can-we-integrate-codeql-to-run-on-individual-prs
+  - name: Codeql.AnalyzeInPipeline
+    value: $[startsWith(variables['Build.SourceBranch'], 'refs/pull/')]
 
 resources:
   repositories:
@@ -18,9 +36,29 @@ resources:
 extends:
   template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
   parameters:
-    globalSdl:
+    globalSdl: # https://aka.ms/obpipelines/sdl
+      codeql: # https://aka.ms/codeql3000-faq
+        compiled:
+          # enable CodeQL on main and PR branches
+          ${{ if or( eq(variables['Build.SourceBranch'], 'refs/heads/main'), startsWith(variables['Build.SourceBranch'], 'refs/pull/') ) }}:
+            enabled: true
+          ${{ else }}:
+            enabled: false
+        buildIdentifier: hcsshim
+        cadence: 72
+        excludePathPatterns: "vendor,test"
+        language: go
+
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
         suppressionSet: default
+
+      # skip for buddy builds
+      sourcesAnalysisStage:
+        enabled: false
+
+      sbom:
+        enabled: true
+
     stages:
       - template: shared-build-stages.yml@self
