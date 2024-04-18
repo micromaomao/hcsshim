@@ -16,6 +16,15 @@ stages:
           type: linux
 
         variables:
+          coverFlags: "-cover -coverpkg=github.com/Microsoft/hcsshim/..."
+          testFlags: "-gcflags=all=-d=checkptr  -tags functional"
+
+          outDir: "$(Build.StagingDirectory)/out"
+          # Where to put the binaries built for testing purposes (not to be confused with testing binaries).
+          # E.g., `containerd-shim-runhcs-v1.exe`, built with code coverage enabled.
+          testDir: "$(outDir)/test"
+          srcDir: "$(outDir)/src"
+
           ob_outputDirectory: "$(Build.StagingDirectory)"
 
         steps:
@@ -76,20 +85,33 @@ stages:
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/uvmboot
 
               GOOS=linux go build -buildmode=pie -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
+
+              # for testing, we need to build the binaries with code coverage enabled
+              # output those binaries under a `test` directory
+              #
+              # see: https://go.dev/doc/build-cover
+              mkdir -p $(testDir)
+
+              # re-build the shim and binaries that are exec'd from the shim (and containerd)
+              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/runhcs
+              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/device-util
+              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/jobobject-util
             env:
               CGO_ENABLED: "0"
               GOPROXY: off
               GOFLAGS: -mod=vendor
               GOOS: windows
-              OUT_DIR: "$(Build.StagingDirectory)/out"
-            displayName: build hcsshim binaries
+              OUT_DIR: "$(outDir)"
+            displayName: Build hcsshim binaries
 
           - script: |
               set -eoux
 
-              go test -gcflags=all=-d=checkptr -c github.com/Microsoft/hcsshim/test/cri-containerd --tags functional
-              go test -gcflags=all=-d=checkptr -tags=functional -c github.com/Microsoft/hcsshim/test/functional
-              GOOS=linux go test -gcflags=all=-d=checkptr -tags=functional -c github.com/Microsoft/hcsshim/test/gcs
+              # cri-containerd.test.exe primarily calls CRI APIs, but enable code coverage regardless
+              go test $(testFlags) $(coverFlags) -c github.com/Microsoft/hcsshim/test/cri-containerd
+              go test $(testFlags) $(coverFlags) -c github.com/Microsoft/hcsshim/test/functional
+              GOOS=linux go test $(testFlags) $(coverFlags) -c github.com/Microsoft/hcsshim/test/gcs
               go build -o sample-logging-driver.exe cri-containerd/helpers/log.go
 
               mv ./cri-containerd.test.exe $OUT_DIR
@@ -99,10 +121,21 @@ stages:
             env:
               CGO_ENABLED: "0"
               GOOS: windows
-              OUT_DIR: "$(Build.StagingDirectory)/out"
+              OUT_DIR: "$(outDir)"
               GOFLAGS: -mod=mod
             workingDirectory: test
-            displayName: build test binaries
+            displayName: Build test binaries
+
+          # code coverage needs the source files to generate the report
+          - task: CopyFiles@2
+            inputs:
+              SourceFolder: $(Build.SourcesDirectory)
+              Contents: |
+                **
+                !.git/**
+                !vendor/**
+              TargetFolder: $(srcDir)
+            displayName: Copy Source Files
 
           - task: CopyFiles@2
             inputs:
@@ -110,7 +143,7 @@ stages:
               contents: |
                 *.rego
                 *.json
-              targetFolder: "$(Build.StagingDirectory)/out"
+              targetFolder: "$(outDir)"
             displayName: Copy cri-containerd test payload
 
           - task: CopyFiles@2
@@ -119,7 +152,7 @@ stages:
               contents: |
                 ncproxygrpc/v0/networkconfigproxy.proto
                 ncproxygrpc/v1/networkconfigproxy.proto
-              targetFolder: "$(Build.StagingDirectory)/out"
+              targetFolder: "$(outDir)"
             displayName: Copy ncproxygrpc api files
 
           - task: CopyFiles@2
@@ -128,7 +161,7 @@ stages:
               contents: |
                 nodenetsvc/v0/nodenetsvc.proto
                 nodenetsvc/v1/nodenetsvc.proto
-              targetFolder: "$(Build.StagingDirectory)/out"
+              targetFolder: "$(outDir)"
             displayName: Copy nodenetsvc api files
 
           - bash: |
@@ -164,7 +197,7 @@ stages:
               GOPROXY: off
               GOFLAGS: -mod=vendor
               GOOS: linux
-              OUT_DIR: "$(Build.StagingDirectory)/out"
+              OUT_DIR: "$(outDir)"
             displayName: build opengcs
 
           - template: .pipelines/templates/build/go-licenses.yml@cplat
@@ -192,7 +225,7 @@ stages:
 
           - template: .pipelines/templates/build/combine-go-licenses.yml@cplat
             parameters:
-              outputDirectory: "$(Build.StagingDirectory)/out/notices"
+              outputDirectory: "$(outDir)/notices"
               inputDirectories:
                 - "$(Agent.TempDirectory)/windows-notices"
                 - "$(Agent.TempDirectory)/linux-notices"
