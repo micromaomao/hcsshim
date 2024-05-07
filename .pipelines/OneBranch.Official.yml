@@ -26,6 +26,8 @@ extends:
         cadence: 72
         excludePathPatterns: "vendor,test"
         language: go
+        tsaEnabled: true
+        tsaOptionsPath: $(Build.SourcesDirectory)/.config/tsaoptions.json
 
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress

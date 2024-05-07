@@ -1,4 +1,5 @@
 {
+  "codeBaseName": "VSTS_Microsoft_OSGS_ContainerPlatform",
   "instanceUrl": "https://microsoft.visualstudio.com",
   "projectName": "OS",
   "areaPath": "OS\\Core\\Base\\VMAC - Virtual Machines and Containers\\CPlat-Container Platform",
