@@ -67,6 +67,10 @@ stages:
                   system: "Custom"
                   customVersion: "$(versionString)"
 
+          - template: .pipelines/templates/build/codeql-go-tracing-workaround.yml@cplat
+            parameters:
+              containerImage: linux_build_container
+
           - script: |
               set -eux
 

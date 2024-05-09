@@ -47,7 +47,6 @@ extends:
         buildIdentifier: hcsshim
         cadence: 72
         excludePathPatterns: "vendor,test"
-        language: go
 
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
