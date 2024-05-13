@@ -28,6 +28,10 @@ extends:
         tsaEnabled: true
         tsaOptionsPath: $(Build.SourcesDirectory)/.config/tsaoptions.json
 
+      # https://eng.ms/docs/products/onebranch/securitycompliancegovernanceandpolicies/sdlforcontainerizedworkflows/customizesdlforcontainerbuilds
+      policheck:
+        exclusionsFile: $(Build.SourcesDirectory)/.config/PolicheckExclusion.xml
+
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
         suppressionSet: default
@@ -37,6 +41,9 @@ extends:
 
       sbom:
         enabled: true
+
+      tsa: # TSA is always enabled during source analysis stage for official builds
+        configFile: $(Build.SourcesDirectory)/.config/tsaoptions.json
 
     stages:
       - template: shared-build-stages.yml@self
