@@ -16,7 +16,6 @@ schedules:
 variables:
   - template: common-variables.yml@self
 
-
   # Run local analysis on PR branches (won't upload to database)
   # https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/codeql/codeql-codeql3000-faq#can-we-integrate-codeql-to-run-on-individual-prs
   - name: Codeql.AnalyzeInPipeline
@@ -47,6 +46,12 @@ extends:
         buildIdentifier: hcsshim
         cadence: 72
         excludePathPatterns: "vendor,test"
+        tsaEnabled: false
+        tsaOptionsPath: $(Build.SourcesDirectory)/.config/tsaoptions.json
+
+      # https://eng.ms/docs/products/onebranch/securitycompliancegovernanceandpolicies/sdlforcontainerizedworkflows/customizesdlforcontainerbuilds
+      policheck:
+        exclusionsFile: $(Build.SourcesDirectory)/.config/PolicheckExclusion.xml
 
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
@@ -58,6 +63,9 @@ extends:
 
       sbom:
         enabled: true
+
+      tsa:
+        configFile: $(Build.SourcesDirectory)/.config/tsaoptions.json
 
     stages:
       - template: shared-build-stages.yml@self
