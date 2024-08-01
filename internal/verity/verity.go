@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Microsoft/hcsshim/ext4/dmverity"
 	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
@@ -56,4 +57,25 @@ func ReadVeritySuperBlock(ctx context.Context, layerPath string) (*guestresource
 		Version:         int(dmvsb.Version),
 		SuperBlock:      true,
 	}, nil
+}
+
+// ReadVeritySuperBlockWithRetry reads verity super block from a given VHD with 10 retry attempts.
+func ReadVeritySuperBlockWithRetry(ctx context.Context, layerPath string) (*guestresource.DeviceVerityInfo, error) {
+	const maxRetries = 10
+	for retries := 0; retries < maxRetries; retries++ {
+		dmInfo, err := ReadVeritySuperBlock(ctx, layerPath)
+		if err == nil {
+			return dmInfo, nil
+		}
+		// TODO: add retry-able errors
+		select {
+		case <-ctx.Done():
+			log.G(ctx).WithError(err).Warnf("context timed out while reading verity superblock from path %s", layerPath)
+			return nil, err
+		default:
+			log.G(ctx).WithError(err).Debug("failed to read verity superblock, retrying after sleep")
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return nil, fmt.Errorf("exceeded maximum retries while reading verity superblock from device %s", layerPath)
 }

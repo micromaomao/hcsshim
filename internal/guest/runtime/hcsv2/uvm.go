@@ -979,7 +979,7 @@ func modifyMappedVirtualDisk(
 			if err != nil {
 				return err
 			}
-			verityInfo, err = verity.ReadVeritySuperBlock(ctx, devPath)
+			verityInfo, err = verity.ReadVeritySuperBlockWithRetry(ctx, devPath)
 			if err != nil {
 				return err
 			}
