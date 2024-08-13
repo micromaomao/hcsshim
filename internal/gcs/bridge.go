@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,6 +71,8 @@ type bridge struct {
 	log     *logrus.Entry
 	brdgErr error
 	waitCh  chan struct{}
+
+	hackLogFile *os.File
 }
 
 var errBridgeClosed = fmt.Errorf("bridge closed: %w", net.ErrClosed)
@@ -84,6 +88,7 @@ type notifyFunc func(*containerNotification) error
 // notification message arrives from the guest. It logs transport errors and
 // traces using `log`.
 func newBridge(conn io.ReadWriteCloser, notify notifyFunc, log *logrus.Entry) *bridge {
+	hackLogFile, _ := os.OpenFile("C:\\ContainerPlat\\gcs-trace.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	return &bridge{
 		conn:    conn,
 		rpcs:    make(map[int64]*rpc),
@@ -92,6 +97,7 @@ func newBridge(conn io.ReadWriteCloser, notify notifyFunc, log *logrus.Entry) *b
 		notify:  notify,
 		log:     log,
 		Timeout: bridgeFailureTimeout,
+		hackLogFile: hackLogFile,
 	}
 }
 
@@ -128,6 +134,7 @@ func (brdg *bridge) kill(err error) {
 // panic.
 func (brdg *bridge) Close() error {
 	brdg.kill(nil)
+	brdg.hackLogFile.Close()
 	return brdg.brdgErr
 }
 
@@ -320,6 +327,9 @@ func (brdg *bridge) recvLoop() error {
 				return fmt.Errorf("bridge received unknown rpc response for id %d, type %s", id, typ)
 			}
 			err := json.Unmarshal(b, call.resp)
+			if err == nil {
+				fmt.Fprintf(brdg.hackLogFile, "< Response: %s\n", strings.TrimSpace(string(b)))
+			}
 			if err != nil {
 				err = fmt.Errorf("bridge response unmarshal failed: %w", err)
 			} else if resp := call.resp.Base(); resp.Result != 0 {
@@ -352,6 +362,7 @@ func (brdg *bridge) recvLoop() error {
 			if err != nil {
 				return fmt.Errorf("bridge response unmarshal failed: %w", err)
 			}
+			fmt.Fprintf(brdg.hackLogFile, "< Notify: %s\n", strings.TrimSpace(string(b)))
 			err = brdg.notify(&ntf)
 			if err != nil {
 				return fmt.Errorf("bridge notification failed: %w", err)
@@ -383,7 +394,7 @@ func (brdg *bridge) sendLoop() {
 
 func (brdg *bridge) writeMessage(buf *bytes.Buffer, enc *json.Encoder, typ msgType, id int64, req interface{}) error {
 	var err error
-	_, span := oc.StartSpan(context.Background(), "bridge send", oc.WithClientSpanKind)
+	_, span := oc.StartSpan(context.Background(), "bridge send span", oc.WithClientSpanKind)
 	defer span.End()
 	defer func() { oc.SetSpanStatus(span, err) }()
 	span.AddAttributes(
@@ -402,8 +413,9 @@ func (brdg *bridge) writeMessage(buf *bytes.Buffer, enc *json.Encoder, typ msgTy
 	// Update the message header with the size.
 	binary.LittleEndian.PutUint32(buf.Bytes()[hdrOffSize:], uint32(buf.Len()))
 
-	if brdg.log.Logger.GetLevel() > logrus.DebugLevel {
+	if true {
 		b := buf.Bytes()[hdrSize:]
+		fmt.Fprintf(brdg.hackLogFile, "> %s: %s\n", typ.String(), strings.TrimSpace(string(b)))
 		switch typ {
 		// container environment vars are in rpCreate for linux; rpcExecuteProcess for windows
 		case msgType(rpcCreate) | msgTypeRequest:
@@ -417,7 +429,7 @@ func (brdg *bridge) writeMessage(buf *bytes.Buffer, enc *json.Encoder, typ msgTy
 		brdg.log.WithFields(logrus.Fields{
 			"payload":    string(b),
 			"type":       typ.String(),
-			"message-id": id}).Trace("bridge send")
+			"message-id": id}).Info("bridge send")
 	}
 
 	// Write the message.

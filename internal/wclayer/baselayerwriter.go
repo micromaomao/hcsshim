@@ -5,12 +5,16 @@ package wclayer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/Microsoft/go-winio"
+	"github.com/Microsoft/hcsshim/internal/copyfile"
 	"github.com/Microsoft/hcsshim/internal/hcserror"
+	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/internal/safefile"
 	"github.com/Microsoft/hcsshim/internal/winapi"
@@ -173,6 +177,36 @@ func (w *baseLayerWriter) Close() (err error) {
 			if err != nil {
 				return err
 			}
+
+			debugFileStr := os.Getenv("DEBUG_FILES_IN_IMAGE")
+
+			if debugFileStr != "" {
+				// HACK FOR TESTING: Replace Windows GCS
+				f := filepath.Join(w.root.Name(), "UtilityVM", "Files", "Windows", "System32", "VmComputeAgent.exe")
+				_, err = os.Stat(f)
+				if os.IsNotExist(err) {
+					fmt.Printf("File %s does not exist.\n", f)
+					return nil
+				} else if err != nil {
+					return err
+				}
+
+				err = os.Remove(f)
+				if err != nil {
+					return err
+				}
+
+				debugFilePaths := strings.Split(debugFileStr, ";")
+				for _, path := range debugFilePaths {
+					dstPath := filepath.Join(w.root.Name(), "UtilityVM", "Files", "Windows", "System32", filepath.Base(path))
+					if err := copyfile.CopyFile(w.ctx, path, dstPath, true); err != nil {
+						return fmt.Errorf("failed to copy debug file in image: %w", err)
+					}
+					log.G(w.ctx).WithField("source file", path).WithField("destination path", dstPath).Info("copied debug file in the image")
+				}
+			}
+			// END OF HACK FOR TESTING
+
 			err = ProcessUtilityVMImage(w.ctx, filepath.Join(w.root.Name(), "UtilityVM"))
 			if err != nil {
 				return err

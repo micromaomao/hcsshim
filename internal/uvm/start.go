@@ -271,10 +271,26 @@ func (uvm *UtilityVM) Start(ctx context.Context) (err error) {
 				}
 			}
 		}
+		logrus.StandardLogger().SetLevel(logrus.TraceLevel)
+
+		/// BEGIN HACK TO MORE EASILY CAPTURE GCS LOGS
+		// outFile, err := os.OpenFile("C:\\ContainerPlat\\gcs-trace.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		// if err != nil {
+		// 	return err
+		// }
+		// gccLog := logrus.NewEntry(&logrus.Logger{
+		// 	Out: outFile,
+		// 	Formatter: new(logrus.TextFormatter),
+		// 	Hooks: make(logrus.LevelHooks),
+		// 	Level: logrus.DebugLevel,
+		// })
+		/// END HACK
+
 		// Start the GCS protocol.
 		gcc := &gcs.GuestConnectionConfig{
 			Conn:           conn,
 			Log:            e,
+			// Log:            gccLog,
 			IoListen:       gcs.HvsockIoListen(uvm.runtimeID),
 			InitGuestState: initGuestState,
 		}
