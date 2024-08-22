@@ -558,7 +558,7 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 		mvd.Controller = cNum
 		// first we try to update the internal state for read-write attachments.
 		if !mvd.ReadOnly {
-			localCtx, cancel := context.WithTimeout(ctx, time.Second*5)
+			localCtx, cancel := context.WithTimeout(ctx, time.Second*10)
 			defer cancel()
 			source, err := scsi.GetDevicePath(localCtx, mvd.Controller, mvd.Lun, mvd.Partition)
 			if err != nil {

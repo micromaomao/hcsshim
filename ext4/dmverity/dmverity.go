@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -164,9 +165,23 @@ func generateUUID() [16]byte {
 
 // ReadDMVerityInfo extracts dm-verity super block information and merkle tree root hash
 func ReadDMVerityInfo(vhdPath string, offsetInBytes int64) (*VerityInfo, error) {
-	vhd, err := os.OpenFile(vhdPath, os.O_RDONLY, 0)
-	if err != nil {
-		return nil, err
+	var vhd *os.File
+	tries := 0
+	maxTries := 100
+	for {
+		var err error
+		vhd, err = os.OpenFile(vhdPath, os.O_RDONLY, 0)
+		if err != nil {
+			if tries < maxTries {
+				tries++
+				time.Sleep(300 * time.Millisecond)
+				continue
+			} else {
+				return nil, err
+			}
+		} else {
+			break
+		}
 	}
 	defer vhd.Close()
 

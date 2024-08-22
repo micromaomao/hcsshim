@@ -167,6 +167,30 @@ func startTimeSyncService() error {
 	return nil
 }
 
+func WriteKMsg(msg string) {
+	kmsg, err := os.OpenFile("/dev/kmsg", os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	kmsg.WriteString(msg)
+	kmsg.Close()
+}
+
+type kmsgHook struct{}
+
+func (hook *kmsgHook) Levels() []logrus.Level {
+	return logrus.AllLevels
+}
+
+func (hook *kmsgHook) Fire(entry *logrus.Entry) (err error) {
+	msg, err := entry.String()
+	if err != nil {
+		return
+	}
+	WriteKMsg(fmt.Sprintf("GCS: %s\n", msg))
+	return
+}
+
 func main() {
 	startTime := time.Now()
 	logLevel := flag.String("loglevel",
@@ -209,6 +233,7 @@ func main() {
 	}
 
 	flag.Parse()
+	*logFormat = "text"
 
 	// If v4 enable opencensus
 	if *v4 {
@@ -268,7 +293,8 @@ func main() {
 
 	logrus.SetLevel(level)
 
-	log.SetScrubbing(*scrubLogs)
+	// log.SetScrubbing(*scrubLogs)
+	logrus.AddHook(&kmsgHook{})
 
 	baseLogPath := guestpath.LCOWRootPrefixInUVM
 
