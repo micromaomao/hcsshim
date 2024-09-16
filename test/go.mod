@@ -9,7 +9,7 @@ require (
 	github.com/containerd/containerd v1.7.16
 	github.com/containerd/errdefs v0.1.0
 	github.com/containerd/go-runc v1.1.0
-	github.com/containerd/ttrpc v1.2.3
+	github.com/containerd/ttrpc v1.2.4
 	github.com/google/go-cmp v0.6.0
 	github.com/google/go-containerregistry v0.19.1
 	github.com/josephspurrier/goversioninfo v1.4.0
