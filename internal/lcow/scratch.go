@@ -73,6 +73,7 @@ func CreateScratch(ctx context.Context, lcowUVM *uvm.UtilityVM, destFile string,
 		destFile,
 		false,
 		lcowUVM.ID(),
+		"",
 		nil, // Attach without mounting.
 	)
 	if err != nil {
