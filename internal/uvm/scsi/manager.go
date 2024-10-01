@@ -138,6 +138,7 @@ func (m *Manager) AddVirtualDisk(
 	hostPath string,
 	readOnly bool,
 	vmID string,
+	guestPath string,
 	mc *MountConfig,
 ) (*Mount, error) {
 	if m == nil {
@@ -165,6 +166,7 @@ func (m *Manager) AddVirtualDisk(
 			readOnly: readOnly,
 			typ:      "VirtualDisk",
 		},
+		guestPath,
 		mcInternal)
 }
 
@@ -183,6 +185,7 @@ func (m *Manager) AddPhysicalDisk(
 	hostPath string,
 	readOnly bool,
 	vmID string,
+	guestPath string,
 	mc *MountConfig,
 ) (*Mount, error) {
 	if m == nil {
@@ -210,6 +213,7 @@ func (m *Manager) AddPhysicalDisk(
 			readOnly: readOnly,
 			typ:      "PassThru",
 		},
+		guestPath,
 		mcInternal)
 }
 
@@ -228,6 +232,7 @@ func (m *Manager) AddExtensibleVirtualDisk(
 	ctx context.Context,
 	hostPath string,
 	readOnly bool,
+	guestPath string,
 	mc *MountConfig,
 ) (*Mount, error) {
 	if m == nil {
@@ -255,10 +260,11 @@ func (m *Manager) AddExtensibleVirtualDisk(
 			typ:      "ExtensibleVirtualDisk",
 			evdType:  evdType,
 		},
+		guestPath,
 		mcInternal)
 }
 
-func (m *Manager) add(ctx context.Context, attachConfig *attachConfig, mountConfig *mountConfig) (_ *Mount, err error) {
+func (m *Manager) add(ctx context.Context, attachConfig *attachConfig, guestPath string, mountConfig *mountConfig) (_ *Mount, err error) {
 	controller, lun, err := m.attachManager.attach(ctx, attachConfig)
 	if err != nil {
 		return nil, err
@@ -269,9 +275,8 @@ func (m *Manager) add(ctx context.Context, attachConfig *attachConfig, mountConf
 		}
 	}()
 
-	var guestPath string
 	if mountConfig != nil {
-		guestPath, err = m.mountManager.mount(ctx, controller, lun, mountConfig)
+		guestPath, err = m.mountManager.mount(ctx, controller, lun, guestPath, mountConfig)
 		if err != nil {
 			return nil, err
 		}
@@ -282,13 +287,8 @@ func (m *Manager) add(ctx context.Context, attachConfig *attachConfig, mountConf
 
 func (m *Manager) remove(ctx context.Context, controller, lun uint, guestPath string) error {
 	if guestPath != "" {
-		removed, err := m.mountManager.unmount(ctx, guestPath)
-		if err != nil {
+		if err := m.mountManager.unmount(ctx, guestPath); err != nil {
 			return err
-		}
-
-		if !removed {
-			return nil
 		}
 	}
 
