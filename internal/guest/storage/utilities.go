@@ -26,6 +26,9 @@ func WaitForFileMatchingPattern(ctx context.Context, pattern string) (string, er
 		if len(files) == 0 {
 			select {
 			case <-ctx.Done():
+				// log.G(ctx).Errorf("timed out waiting for file matching pattern %s to exist", pattern)
+				// log.G(ctx).Errorf("will now hang for debugging")
+				// time.Sleep(time.Hour*1000)
 				return "", errors.Wrapf(ctx.Err(), "timed out waiting for file matching pattern %s to exist", pattern)
 			default:
 				time.Sleep(time.Millisecond * 10)

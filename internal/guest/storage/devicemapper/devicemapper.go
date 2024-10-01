@@ -220,6 +220,15 @@ func makeTableIoctl(name string, targets []Target) *dmIoctl {
 	return d
 }
 
+func WriteKMsg(msg string) {
+	kmsg, err := os.OpenFile("/dev/kmsg", os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	kmsg.WriteString(msg)
+	kmsg.Close()
+}
+
 // CreateDeviceWithRetryErrors keeps retrying to create device mapper target
 func CreateDeviceWithRetryErrors(
 	ctx context.Context,
@@ -228,33 +237,47 @@ func CreateDeviceWithRetryErrors(
 	targets []Target,
 	errs ...error,
 ) (string, error) {
-retry:
 	for {
 		dmPath, err := _createDevice(name, flags, targets)
 		if err == nil {
 			return dmPath, nil
 		}
 		log.G(ctx).WithError(err).Warning("CreateDevice error")
-		// In some cases
-		dmErr, ok := err.(*dmError) //nolint:errorlint // explicitly returned
-		if !ok {
+		WriteKMsg(fmt.Sprintf("CreateDeviceWithRetryErrors: Needed to retry because error %v\n", err))
+		select {
+		case <-ctx.Done():
+			log.G(ctx).WithError(err).Error("CreateDeviceWithRetryErrors failed, context timeout")
 			return "", err
+		default:
+			time.Sleep(100 * time.Millisecond)
 		}
-		// check retry-able errors
-		for _, e := range errs {
-			if errors.Is(dmErr.Err, e) {
-				select {
-				case <-ctx.Done():
-					log.G(ctx).WithError(err).Error("CreateDeviceWithRetryErrors failed, context timeout")
-					return "", err
-				default:
-					time.Sleep(100 * time.Millisecond)
-					continue retry
-				}
-			}
-		}
-		return "", fmt.Errorf("CreateDeviceWithRetryErrors failed: %w", err)
 	}
+	// for {
+	// 	dmPath, err := _createDevice(name, flags, targets)
+	// 	if err == nil {
+	// 		return dmPath, nil
+	// 	}
+	// 	log.G(ctx).WithError(err).Warning("CreateDevice error")
+	// 	// In some cases
+	// 	dmErr, ok := err.(*dmError) //nolint:errorlint // explicitly returned
+	// 	if !ok {
+	// 		return "", err
+	// 	}
+	// 	// check retry-able errors
+	// 	for _, e := range errs {
+	// 		if errors.Is(dmErr.Err, e) {
+	// 			select {
+	// 			case <-ctx.Done():
+	// 				log.G(ctx).WithError(err).Error("CreateDeviceWithRetryErrors failed, context timeout")
+	// 				return "", err
+	// 			default:
+	// 				time.Sleep(100 * time.Millisecond)
+	// 				continue retry
+	// 			}
+	// 		}
+	// 	}
+	// 	return "", fmt.Errorf("CreateDeviceWithRetryErrors failed: %w", err)
+	// }
 }
 
 // CreateDevice creates a device-mapper device with the given target spec. It returns

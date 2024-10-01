@@ -58,6 +58,8 @@ out/delta-snp.tar.gz: out/delta.tar.gz bin/internal/tools/snp-report boot/startu
 	chmod a+x rootfs-snp/startup_v2056.sh
 	chmod a+x rootfs-snp/startup_simple.sh
 	chmod a+x rootfs-snp/startup.sh
+	cp boot/busybox-musl rootfs-snp/ -r
+	chmod +x rootfs-snp/busybox-musl/busybox
 	tar -zcf $@ -C rootfs-snp .
 	rm -rf rootfs-snp
 

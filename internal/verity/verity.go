@@ -13,10 +13,23 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+func WriteKMsg(msg string) {
+	kmsg, err := os.OpenFile("/dev/kmsg", os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	kmsg.WriteString(msg)
+	kmsg.Close()
+}
+
 // fileSystemSize retrieves ext4 fs SuperBlock and returns the file system size and block size
 func fileSystemSize(vhdPath string) (int64, int, error) {
+	log.G(context.Background()).WithField("vhdPath", vhdPath).Info("verity fileSystemSize: about to read disk")
+	// time.Sleep(30 * time.Millisecond)
+
 	vhd, err := os.Open(vhdPath)
 	if err != nil {
+		log.G(context.Background()).WithError(err).Error("verity fileSystemSize: failed to open VHD file")
 		return 0, 0, fmt.Errorf("failed to open VHD file: %w", err)
 	}
 	defer vhd.Close()

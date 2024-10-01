@@ -200,6 +200,8 @@ func addLCOWLayer(ctx context.Context, vm *uvm.UtilityVM, layer *LCOWLayer) (uvm
 		},
 	)
 	if err != nil {
+		// log.G(ctx).Warnf("Will now block indefinitely on failure")
+		// time.Sleep(time.Hour * 1000)
 		return "", nil, fmt.Errorf("failed to add SCSI layer: %w", err)
 	}
 	log.G(ctx).WithFields(logrus.Fields{

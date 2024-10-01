@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -110,6 +112,94 @@ func MergeValues(first, second []string) []string {
 	return values
 }
 
+var kmsgFile *os.File
+
+func WriteKMsg(msg string) {
+	if kmsgFile == nil {
+		finfo, err := os.Lstat("/dev/kmsg")
+		if err != nil {
+			return
+		}
+		if finfo.Mode() & os.ModeCharDevice == 0 {
+			return
+		}
+		kmsgFile, err = os.OpenFile("/dev/kmsg", os.O_WRONLY, 0)
+		if err != nil {
+			kmsgFile = nil
+			return
+		}
+	}
+	lines := strings.Split(msg, "\n")
+	var err error
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		max_len := 800
+		for len(line) > max_len {
+			_, err = kmsgFile.WriteString("<3>" + line[:max_len] + " \\\n")
+			kmsgFile.Close()
+			kmsgFile, _ = os.OpenFile("/dev/kmsg", os.O_WRONLY, 0)
+			if err != nil {
+				kmsgFile.WriteString("<3>Failed to write to /dev/kmsg: " + err.Error() + "\n")
+			}
+			line = line[max_len:]
+		}
+		_, err = kmsgFile.WriteString("<3>" + line + "\n")
+		kmsgFile.Close()
+		kmsgFile, _ = os.OpenFile("/dev/kmsg", os.O_WRONLY, 0)
+		if err != nil {
+			kmsgFile.WriteString("<3>Failed to write to /dev/kmsg: " + err.Error() + "\n")
+		}
+	}
+	kmsgFile.Close()
+	kmsgFile = nil
+}
+
+func execAndPrintToKmsg(cmd string) {
+		WriteKMsg(cmd + ":\n")
+
+    // Prepare the command to execute
+    command := exec.Command("bash", "-c", cmd)
+
+    // Create buffers to store stdout and stderr
+    var stdoutBuf, stderrBuf bytes.Buffer
+
+    // Get stdout and stderr pipes
+    stdout, err := command.StdoutPipe()
+    if err != nil {
+			log.G(context.Background()).Errorf("Error getting stdout: %v", err)
+			return
+    }
+    stderr, err := command.StderrPipe()
+    if err != nil {
+			log.G(context.Background()).Errorf("Error getting stderr: %v", err)
+			return
+    }
+
+    // Start the command
+    if err := command.Start(); err != nil {
+			log.G(context.Background()).Errorf("Error starting command: %v", err)
+			return
+    }
+
+    // Read both stdout and stderr asynchronously
+    go io.Copy(&stdoutBuf, stdout)
+    go io.Copy(&stderrBuf, stderr)
+
+    // Wait for the command to finish
+    if err := command.Wait(); err != nil {
+			log.G(context.Background()).Errorf("Error waiting for command: %v", err)
+			return
+    }
+
+    // Combine stdout and stderr
+    combinedOutput := stdoutBuf.String() + stderrBuf.String() + "\n"
+
+    // Write the combined output to /dev/kmsg
+    WriteKMsg(combinedOutput)
+}
+
 // InstanceIDToName converts from the given instance ID (a GUID generated on the
 // Windows host) to its corresponding interface name (e.g. "eth0").
 //
@@ -135,7 +225,15 @@ func InstanceIDToName(ctx context.Context, id string, vpciAssigned bool) (_ stri
 		vmBusNetSubPath := filepath.Join(vmBusID, "net")
 		netDevicePath, err = vmbusWaitForDevicePath(ctx, vmBusNetSubPath)
 	}
+	execAndPrintToKmsg("echo 0 > /sys/kernel/tracing/tracing_on")
 	if err != nil {
+		log.G(ctx).Errorf("failed to find adapter %v sysfs path", vmBusID)
+		execAndPrintToKmsg("ls -R /sys/bus/vmbus")
+		execAndPrintToKmsg("ls -la /sys/bus/vmbus/devices/")
+		execAndPrintToKmsg("for i in /sys/bus/vmbus/devices/*; do echo $i; ls -la $i/; done")
+		execAndPrintToKmsg("echo /sys/bus/vmbus/devices/*/net")
+		// return "eth0", nil
+		time.Sleep(130 * time.Second)
 		return "", errors.Wrapf(err, "failed to find adapter %v sysfs path", vmBusID)
 	}
 
