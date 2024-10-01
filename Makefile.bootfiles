@@ -39,10 +39,11 @@ snp: out/kernel.vmgs out/rootfs-verity.vhd out/v2056.vmgs out/v2056combined.vmgs
 
 simple: out/simple.vmgs snp
 
+# $(PATH_PREFIX)/$(VMGS_TOOL) create --filepath $@ --filesize `du -BM $< | sed  "s/^\\([0-9]\\+\\)M.\\+/(\\1+1)*1024*1024/" | bc`
 %.vmgs: %.bin
 	rm -f $@
 	# du -BM returns the size of the bin file in M, eg 7M. The sed command replaces the M with *1024*1024 and then bc does the math to convert to bytes
-	$(PATH_PREFIX)/$(VMGS_TOOL) create --filepath $@ --filesize `du -BM $< | sed  "s/M.*/*1024*1024/" | bc`
+	$(PATH_PREFIX)/$(VMGS_TOOL) create --filepath $@ --filesize `du -BM $< | sed  "s/^\\([0-9]\\+\\)M.\\+/(\\1+1)*1024*1024/" | bc`
 	$(PATH_PREFIX)/$(VMGS_TOOL) write --filepath $@ --datapath $< -i=8
 
 # Simplest debug UVM used to test changes to the linux kernel. No dmverity protection. Boots an initramdisk rather than directly booting a vhd disk.
@@ -135,15 +136,19 @@ out/v2056.bin: out/rootfs.vhd out/rootfs.hash.vhd $(PATH_PREFIX)/$(KERNEL_PATH) 
 		-append "8250_core.nr_uarts=0 panic=-1 debug loglevel=9 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(HASH_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt) 1 ignore_corruption\" init=/startup_v2056.sh" \
 		-vtl 0
 
+# -append "8250_core.nr_uarts=0 panic=-1 debug loglevel=9 ignore_loglevel root=/dev/sda ro init=/startup_v2056.sh" \
+
 out/v2056combined.bin: out/rootfs-verity.vhd $(PATH_PREFIX)/$(KERNEL_PATH) out/rootfs.hash.datablocksize out/rootfs.hash.hashblocksize out/rootfs.hash.datablocks out/rootfs.hash.rootdigest out/rootfs.hash.salt boot/startup_v2056.sh
 	rm -f $@
 	echo root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(ROOTFS_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt) 1 ignore_corruption\"
 	python3 $(PATH_PREFIX)/$(IGVM_TOOL) \
 		-o $@ \
 		-kernel $(PATH_PREFIX)/$(KERNEL_PATH) \
-		-append "8250_core.nr_uarts=0 panic=-1 debug loglevel=9 ignore_loglevel dev.scsi.logging_level=9411 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(ROOTFS_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt) 1 ignore_corruption\" init=/startup_v2056.sh" \
+		-append "8250_core.nr_uarts=1 8250_core.skip_txen_test=1 console=ttyS0,115200 kgdboc=ttyS0,115200 nokaslr panic=-1 debug loglevel=7 no_hash_pointers hv_storvsc.logging_level=2 dev.scsi.logging_level=9411 root=/dev/sda init=/startup_v2056.sh" \
 		-vtl 0
 
+# -append "8250_core.nr_uarts=1 8250_core.skip_txen_test=1 console=ttyS0,115200 kgdboc=ttyS0,115200 nokaslr panic=-1 debug loglevel=7 no_hash_pointers hv_storvsc.logging_level=2 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(ROOTFS_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt) 1 ignore_corruption\" init=/startup.sh" \
+# 8250_core.nr_uarts=1 8250_core.skip_txen_test=1 console=ttyS0,115200
 # Full UVM with dm-verity protected vhd disk mounted directly via the kernel command line.
 out/kernel.bin: out/rootfs-verity.vhd $(PATH_PREFIX)/$(KERNEL_PATH) out/rootfs.hash.datasectors out/rootfs.hash.datablocksize out/rootfs.hash.hashblocksize out/rootfs.hash.datablocks out/rootfs.hash.rootdigest out/rootfs.hash.salt boot/startup.sh
 	rm -f $@
@@ -151,7 +156,7 @@ out/kernel.bin: out/rootfs-verity.vhd $(PATH_PREFIX)/$(KERNEL_PATH) out/rootfs.h
 	python3 $(PATH_PREFIX)/$(IGVM_TOOL) \
 		-o $@ \
 		-kernel $(PATH_PREFIX)/$(KERNEL_PATH) \
-		-append "8250_core.nr_uarts=0 panic=-1 debug loglevel=7 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(ROOTFS_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt)\" init=/startup.sh" \
+		-append "8250_core.nr_uarts=0 debug loglevel=7 panic=-1 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(ROOTFS_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt) 1 ignore_corruption\" init=/startup.sh no_hash_pointers hv_storvsc.logging_level=2" \
 		-vtl 0
 
 # Rule to make a vhd from a file. This is used to create the rootfs.hash.vhd from rootfs.hash.

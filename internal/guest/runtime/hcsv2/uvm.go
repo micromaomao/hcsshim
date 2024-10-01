@@ -965,12 +965,36 @@ func modifySCSIDevice(
 	}
 }
 
+func WriteKMsg(msg string) {
+	kmsg, err := os.OpenFile("/dev/kmsg", os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	kmsg.WriteString(msg)
+	kmsg.Close()
+}
+
+func Sync() {
+	err := exec.Command("sync").Run()
+	if err != nil {
+		WriteKMsg("Failed to sync\n")
+	} else {
+		WriteKMsg("sync\n")
+	}
+}
+
 func modifyMappedVirtualDisk(
 	ctx context.Context,
 	rt guestrequest.RequestType,
 	mvd *guestresource.LCOWMappedVirtualDisk,
 	securityPolicy securitypolicy.SecurityPolicyEnforcer,
 ) (err error) {
+	log.G(ctx).WithField("mvd", &mvd).WithField("requestType", rt).Info("modifyMappedVirtualDisk request")
+	// log.G(ctx).Infof("Sleeping for 150 ms before reading verity block to work around race.")
+	// time.Sleep(150 * time.Millisecond)
+
+	// Sync()
+
 	var verityInfo *guestresource.DeviceVerityInfo
 	if mvd.ReadOnly {
 		// The only time the policy is empty, and we want it to be empty

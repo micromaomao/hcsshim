@@ -24,26 +24,13 @@ func WriteKMsg(msg string) {
 
 // fileSystemSize retrieves ext4 fs SuperBlock and returns the file system size and block size
 func fileSystemSize(vhdPath string) (int64, int, error) {
-	var vhd *os.File
-	// tries := 0
-	// maxTries := 100
-	for {
-		var err error
-		vhd, err = os.OpenFile(vhdPath, os.O_RDONLY, 0)
-		if err != nil {
-			// WriteKMsg(fmt.Sprintf("verity: failed to open vhd: %v - attempt %d / %d\n", err, tries+1, maxTries))
-			WriteKMsg(fmt.Sprintf("verity: failed to open vhd: %v\n", err))
-			return 0, 0, err
-			// if tries < maxTries {
-			// 	tries++
-			// 	time.Sleep(200 * time.Millisecond)
-			// 	continue
-			// } else {
-			// 	return 0, 0, err
-			// }
-		} else {
-			break
-		}
+	log.G(context.Background()).WithField("vhdPath", vhdPath).Info("verity fileSystemSize: about to read disk")
+	// time.Sleep(30 * time.Millisecond)
+
+	vhd, err := os.Open(vhdPath)
+	if err != nil {
+		log.G(context.Background()).WithError(err).Error("verity fileSystemSize: failed to open VHD file")
+		return 0, 0, fmt.Errorf("failed to open VHD file: %w", err)
 	}
 	defer vhd.Close()
 

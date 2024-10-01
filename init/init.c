@@ -134,7 +134,7 @@ const struct InitOp ops[] = {
     {OpMount, .mount = {"devpts", "/dev/pts", "devpts", MS_NOSUID | MS_NOEXEC}},
 
     // mount /sys (which should already exist)
-    {OpMount, .mount = {"sysfs", "/sys", "sysfs", MS_NODEV | MS_NOSUID | MS_NOEXEC}},
+    // {OpMount, .mount = {"sysfs", "/sys", "sysfs", MS_NODEV | MS_NOSUID | MS_NOEXEC}},
     {OpMount, .mount = {"cgroup_root", "/sys/fs/cgroup", "tmpfs", MS_NODEV | MS_NOSUID | MS_NOEXEC, "mode=0755"}},
 };
 

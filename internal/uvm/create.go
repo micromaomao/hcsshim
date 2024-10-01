@@ -245,6 +245,9 @@ func (uvm *UtilityVM) CloseCtx(ctx context.Context) (err error) {
 	defer func() { oc.SetSpanStatus(span, err) }()
 	span.AddAttributes(trace.StringAttribute(logfields.UVMID, uvm.id))
 
+	// log.G(ctx).Warnf("Will now block indefinitely on close")
+	// time.Sleep(time.Hour * 1000)
+
 	// TODO: check if uVM already closed
 
 	windows.Close(uvm.vmmemProcess)
