@@ -17,6 +17,46 @@ mount -t tracefs tracefs /sys/kernel/tracing/
 pushd /sys/kernel/tracing/
 echo 0 > tracing_on
 echo 150000 > buffer_size_kb
+echo 1 > events/hyperv/enable
+echo 1 > events/dev/enable
+echo 1 > events/printk/enable
+echo 1 > events/netvsc/enable
+echo 1 > events/irq_vectors/enable
+echo 1 > events/syscalls/enable
+
+echo '?*vmbus*' > set_ftrace_filter
+echo '?*netvsc*' >> set_ftrace_filter
+echo 'vmbus*' >> set_ftrace_filter
+echo 'netvsc*' >> set_ftrace_filter
+echo '__sysvec_hyperv_callback' >> set_ftrace_filter
+echo 'sysvec_hyperv_callback' >> set_ftrace_filter
+echo 'net_rx_action' >> set_ftrace_filter
+echo 'hv_ghcb_hypercall' >> set_ftrace_filter
+echo 'hv_ringbuffer_write' >> set_ftrace_filter
+echo 'hv_signal_on_write' >> set_ftrace_filter
+echo 'hv_*' >> set_ftrace_filter
+echo '!hv_isolation_type_en_snp' >> set_ftrace_filter
+echo 'sev_*' >> set_ftrace_filter
+echo '?*sev*' >> set_ftrace_filter
+echo 'tick*' >> set_ftrace_filter
+echo 'clockevents*' >> set_ftrace_filter
+echo 'irq_work*' >> set_ftrace_filter
+echo 'hrtimer*' >> set_ftrace_filter
+echo function > current_tracer
+
+# echo '?*vmbus*' > set_graph_function
+# echo '?*netvsc*' >> set_graph_function
+# echo 'vmbus*' >> set_graph_function
+# echo 'netvsc*' >> set_graph_function
+# echo '__sysvec_hyperv_callback' >> set_graph_function
+# echo 'sysvec_hyperv_callback' >> set_graph_function
+# echo 'net_rx_action' >> set_graph_function
+# echo 'netvsc_device_add' >> set_graph_function
+# echo '_printk' > set_graph_notrace
+# echo 'vprintk' >> set_graph_notrace
+# echo 'serial8250_console_putchar' >> set_graph_notrace
+# echo 5 > /sys/kernel/tracing/max_graph_depth
+# echo function_graph > current_tracer
 
 echo 1 > tracing_on
 

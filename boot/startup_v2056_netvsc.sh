@@ -25,11 +25,12 @@ echo 1 > events/dev/enable
 echo 1 > events/printk/enable
 echo 1 > events/netvsc/enable
 echo 1 > events/irq_vectors/enable
+echo 1 > events/syscalls/enable
 
-echo '?*vmbus*' > set_ftrace_filter
-echo '?*netvsc*' >> set_ftrace_filter
-echo 'vmbus*' >> set_ftrace_filter
-echo 'netvsc*' >> set_ftrace_filter
+# echo '?*vmbus*' > set_ftrace_filter
+# echo '?*netvsc*' >> set_ftrace_filter
+# echo 'vmbus*' >> set_ftrace_filter
+# echo 'netvsc*' >> set_ftrace_filter
 # echo '__sysvec_hyperv_callback' >> set_ftrace_filter
 # echo 'sysvec_hyperv_callback' >> set_ftrace_filter
 # echo 'net_rx_action' >> set_ftrace_filter
@@ -38,7 +39,7 @@ echo 'netvsc*' >> set_ftrace_filter
 # echo 'hv_signal_on_write' >> set_ftrace_filter
 # echo 'hv_*' >> set_ftrace_filter
 # echo '!hv_isolation_type_en_snp' >> set_ftrace_filter
-echo function > current_tracer
+# echo function > current_tracer
 
 # echo '?*vmbus*' > set_graph_function
 # echo '?*netvsc*' >> set_graph_function
@@ -49,7 +50,7 @@ echo function > current_tracer
 # echo 'net_rx_action' >> set_graph_function
 # echo 'netvsc_device_add' >> set_graph_function
 # echo 5 > /sys/kernel/tracing/max_graph_depth
-# echo function_graph > current_tracer
+echo function_graph > current_tracer
 
 echo 1 > tracing_on
 
