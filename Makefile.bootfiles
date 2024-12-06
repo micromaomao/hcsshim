@@ -132,7 +132,7 @@ out/v2056.bin: out/rootfs.vhd out/rootfs.hash.vhd $(PATH_PREFIX)/$(KERNEL_PATH) 
 	python3 $(PATH_PREFIX)/$(IGVM_TOOL) \
 		-o $@ \
 		-kernel $(PATH_PREFIX)/$(KERNEL_PATH) \
-		-append "8250_core.nr_uarts=0 panic=-1 debug loglevel=9 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(HASH_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt) 1 ignore_corruption\" init=/startup_v2056.sh" \
+		-append "8250_core.nr_uarts=0 panic=-1 debug loglevel=9 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(HASH_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt) 1 ignore_corruption\" init=/startup_v2056.sh noxsave" \
 		-vtl 0
 
 out/v2056combined.bin: out/rootfs-verity.vhd $(PATH_PREFIX)/$(KERNEL_PATH) out/rootfs.hash.datablocksize out/rootfs.hash.hashblocksize out/rootfs.hash.datablocks out/rootfs.hash.rootdigest out/rootfs.hash.salt boot/startup_v2056.sh
@@ -141,7 +141,7 @@ out/v2056combined.bin: out/rootfs-verity.vhd $(PATH_PREFIX)/$(KERNEL_PATH) out/r
 	python3 $(PATH_PREFIX)/$(IGVM_TOOL) \
 		-o $@ \
 		-kernel $(PATH_PREFIX)/$(KERNEL_PATH) \
-		-append "8250_core.nr_uarts=0 panic=-1 debug loglevel=9 ignore_loglevel dev.scsi.logging_level=9411 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(ROOTFS_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt) 1 ignore_corruption\" init=/startup_v2056.sh" \
+		-append "8250_core.nr_uarts=1 8250_core.skip_txen_test=1 console=ttyS0,115200 panic=-1 debug loglevel=9 ignore_loglevel dev.scsi.logging_level=9411 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(ROOTFS_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt) 1 ignore_corruption\" init=/startup_v2056.sh noxsave" \
 		-vtl 0
 
 # Full UVM with dm-verity protected vhd disk mounted directly via the kernel command line.
@@ -151,7 +151,7 @@ out/kernel.bin: out/rootfs-verity.vhd $(PATH_PREFIX)/$(KERNEL_PATH) out/rootfs.h
 	python3 $(PATH_PREFIX)/$(IGVM_TOOL) \
 		-o $@ \
 		-kernel $(PATH_PREFIX)/$(KERNEL_PATH) \
-		-append "8250_core.nr_uarts=0 panic=-1 debug loglevel=7 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(ROOTFS_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt)\" init=/startup.sh" \
+		-append "8250_core.nr_uarts=1 8250_core.skip_txen_test=1 console=ttyS0,115200 panic=-1 debug loglevel=7 root=/dev/dm-0 dm-mod.create=\"dmverity,,,ro,0 $(shell cat out/rootfs.hash.datasectors) verity 1 $(ROOTFS_DEVICE) $(ROOTFS_DEVICE) $(shell cat out/rootfs.hash.datablocksize) $(shell cat out/rootfs.hash.hashblocksize) $(shell cat out/rootfs.hash.datablocks) $(shell cat out/rootfs.hash.datablocks) sha256 $(shell cat out/rootfs.hash.rootdigest) $(shell cat out/rootfs.hash.salt)\" init=/startup.sh noxsave" \
 		-vtl 0
 
 # Rule to make a vhd from a file. This is used to create the rootfs.hash.vhd from rootfs.hash.
