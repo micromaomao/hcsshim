@@ -370,6 +370,7 @@ pid_t launch(int argc, char **argv) {
     if (putenv(DEFAULT_PATH_ENV)) { // Specify the PATH used for execvpe
         die("putenv");
     }
+    // CodeQL [SM01925] designed to initialize Linux guest and then exec the command-line arguments (either ./vsockexec or ./cmd/gcs)
     execvpe(argvn[0], argvn, (char**)default_envp);
     die2("execvpe", argvn[0]);
 }
