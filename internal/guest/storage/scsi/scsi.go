@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -244,7 +245,12 @@ func Mount(
 	// device should already be present under /dev, so we should not get an error
 	// unless the command has actually errored out
 	if err := unixMount(source, target, mountType, flags, data); err != nil {
-		return fmt.Errorf("mounting: %w", err)
+		dmesg := ""
+		dmesg_cmd, dmesg_err := exec.Command("dmesg").Output()
+		if dmesg_err == nil {
+			dmesg = string(dmesg_cmd)
+		}
+		return fmt.Errorf("mounting: %w\n%s", err, dmesg)
 	}
 
 	// remount the target to account for propagation flags
