@@ -131,6 +131,9 @@ func MountLCOWLayers(ctx context.Context, containerID string, layers *LCOWLayers
 		// Encrypted scratch devices are formatted with xfs
 		mConfig.Filesystem = "xfs"
 	}
+
+	mConfig.Filesystem = "ext4"
+
 	scsiMount, err := vm.SCSIManager.AddVirtualDisk(
 		ctx,
 		hostPath,
