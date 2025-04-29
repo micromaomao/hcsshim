@@ -222,24 +222,24 @@ func Mount(
 	// correct filesystem configured on it. If it does not, format the device
 	// with the corect filesystem. Right now, we only support formatting ext4
 	// and xfs.
-	if config.EnsureFilesystem {
-		// compare the actual fs found on the device to the filesystem requested
-		if deviceFS != config.Filesystem {
-			// re-format device to the correct fs
-			switch config.Filesystem {
-			case "ext4":
-				if err := ext4Format(ctx, source); err != nil {
-					return fmt.Errorf("ext4 format: %w", err)
-				}
-			case "xfs":
-				if err = xfsFormat(source); err != nil {
-					return fmt.Errorf("xfs format: %w", err)
-				}
-			default:
-				return fmt.Errorf("unsupported filesystem %s requested for device", config.Filesystem)
-			}
-		}
-	}
+	// if config.EnsureFilesystem {
+	// 	// compare the actual fs found on the device to the filesystem requested
+	// 	if deviceFS != config.Filesystem {
+	// 		// re-format device to the correct fs
+	// 		switch config.Filesystem {
+	// 		case "ext4":
+	// 			if err := ext4Format(ctx, source); err != nil {
+	// 				return fmt.Errorf("ext4 format: %w", err)
+	// 			}
+	// 		case "xfs":
+	// 			if err = xfsFormat(source); err != nil {
+	// 				return fmt.Errorf("xfs format: %w", err)
+	// 			}
+	// 		default:
+	// 			return fmt.Errorf("unsupported filesystem %s requested for device", config.Filesystem)
+	// 		}
+	// 	}
+	// }
 
 	// device should already be present under /dev, so we should not get an error
 	// unless the command has actually errored out
