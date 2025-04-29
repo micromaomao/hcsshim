@@ -83,9 +83,9 @@ func cryptsetupFormat(ctx context.Context, source string, keyFilePath string) er
 		// documentation mentions as one of the combinations they use for
 		// testing:
 		// https://gitlab.com/cryptsetup/cryptsetup/-/blob/a0277d3ff6ab7d5c9e0534f25b4b40719e999c8e/docs/v2.0.0-ReleaseNotes#L259-261
-		"--cipher", "aes-xts-plain64", "--integrity", "hmac-sha256",
+		"--cipher", "aes-xts-plain64", // "--integrity", "hmac-sha256",
 		// See EncryptDevice() for the reason of using --integrity-no-wipe
-		"--integrity-no-wipe",
+		// "--integrity-no-wipe",
 		// Use 4KB sectors, the documentation mentions it can improve
 		// performance than smaller sizes.
 		"--sector-size", "4096",
@@ -107,7 +107,8 @@ func cryptsetupOpen(ctx context.Context, source string, deviceName string, keyFi
 		// Open device with the key passed to luksFormat
 		"luksOpen", source, deviceName, "--key-file", keyFilePath,
 		// Don't use a journal to increase performance
-		"--integrity-no-journal", "--persistent"}
+		// "--integrity-no-journal", "--persistent"}
+	}
 
 	return cryptsetupCommand(ctx, openArgs)
 }
