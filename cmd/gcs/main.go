@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -167,6 +169,62 @@ func startTimeSyncService() error {
 	return nil
 }
 
+var kmsgFile *os.File
+
+func WriteKMsg(msg string) {
+	if kmsgFile == nil {
+		finfo, err := os.Lstat("/dev/kmsg")
+		if err != nil {
+			return
+		}
+		if finfo.Mode() & os.ModeCharDevice == 0 {
+			return
+		}
+		kmsgFile, err = os.OpenFile("/dev/kmsg", os.O_WRONLY, 0)
+		if err != nil {
+			kmsgFile = nil
+			return
+		}
+	}
+	lines := strings.Split(msg, "\n")
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		max_len := 800
+		for len(line) > max_len {
+			kmsgFile.WriteString("<3>" + line[:max_len] + " \\\n")
+			line = line[max_len:]
+		}
+		kmsgFile.WriteString("<3>" + line + "\n")
+	}
+	kmsgFile.Sync()
+}
+
+type kmsgHook struct{}
+
+func (hook *kmsgHook) Levels() []logrus.Level {
+	return logrus.AllLevels
+}
+
+func (hook *kmsgHook) Fire(entry *logrus.Entry) (err error) {
+	fields := strings.Builder{}
+	sortedKeys := make([]string, 0, len(entry.Data))
+	for k := range entry.Data {
+		sortedKeys = append(sortedKeys, k)
+	}
+	slices.Sort(sortedKeys)
+	for _, k := range sortedKeys {
+		v := entry.Data[k]
+		ignoredFields := []string{"time", "level", "msg", "activityID", "spanID", "traceID", "startTime", "endTime"}
+		if !slices.Contains(ignoredFields, k) {
+			fmt.Fprintf(&fields, "%s=%v ", k, v)
+		}
+	}
+	WriteKMsg(fmt.Sprintf("[gcs] [%s] %s %v\n", entry.Level, entry.Message, fields.String()))
+	return
+}
+
 func main() {
 	startTime := time.Now()
 	logLevel := flag.String("loglevel",
@@ -209,6 +267,9 @@ func main() {
 	}
 
 	flag.Parse()
+	*logFormat = "text"
+	*scrubLogs = false
+	*kmsgLogLevel = uint(kmsg.Err)
 
 	// If v4 enable opencensus
 	if *v4 {
@@ -268,7 +329,8 @@ func main() {
 
 	logrus.SetLevel(level)
 
-	log.SetScrubbing(*scrubLogs)
+	// log.SetScrubbing(*scrubLogs)
+	logrus.AddHook(&kmsgHook{})
 
 	baseLogPath := guestpath.LCOWRootPrefixInUVM
 
@@ -292,7 +354,7 @@ func main() {
 	}
 
 	// Continuously log /dev/kmsg
-	go kmsg.ReadForever(kmsg.LogLevel(*kmsgLogLevel))
+	// go kmsg.ReadForever(kmsg.LogLevel(*kmsgLogLevel))
 
 	tport := &transport.VsockTransport{}
 	rtime, err := runc.NewRuntime(baseLogPath)
