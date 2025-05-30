@@ -5,6 +5,38 @@ import future.keywords.in
 
 version := "@@FRAMEWORK_VERSION@@"
 
+# Add ^ and $ to regex patterns that doesn't have them.
+# This forces the regex to match the entire string, which is safer.
+# Policies should include .* explicitly at the beginning or end if partial
+# matches are to be allowed.
+
+anchor_pattern(p) := anchored {
+    startswith_leading := startswith(p, "^")
+    endswith_trailing := endswith(p, "$")
+
+    anchored = sprintf("%s%s%s", [
+        add_leading_trailing_chars(startswith_leading, "", "^"),  # Add ^ only if missing
+        p,
+        add_leading_trailing_chars(endswith_trailing, "", "$")     # Add $ only if missing
+    ])
+}
+
+# Function to return one of two values depending on a boolean condition
+add_leading_trailing_chars(cond, ifTrue, ifFalse) := result {
+    cond
+    result = ifTrue
+}
+
+add_leading_trailing_chars(cond, ifTrue, ifFalse) := result {
+    not cond
+    result = ifFalse
+}
+
+regex_fullmatch(pattern, value) {
+    anchored := anchor_pattern(pattern)
+    regex.match(anchored, value)
+}
+
 device_mounted(target) {
     data.metadata.devices[target]
 }
@@ -171,30 +203,7 @@ env_ok(pattern, "string", value) {
 }
 
 env_ok(pattern, "re2", value) {
-    anchored := anchor_pattern(pattern)
-    regex.match(anchored, value)
-}
-
-anchor_pattern(p) := anchored {
-    startswith_leading := startswith(p, "^")
-    endswith_trailing := endswith(p, "$")
-
-    anchored = sprintf("%s%s%s", [
-        add_leading_trailing_chars(startswith_leading, "", "^"),  # Add ^ only if missing
-        p,
-        add_leading_trailing_chars(endswith_trailing, "", "$")     # Add $ only if missing
-    ])
-}
-
-# Function to return one of two values depending on a boolean condition
-add_leading_trailing_chars(cond, ifTrue, ifFalse) := result {
-    cond
-    result = ifTrue
-}
-
-add_leading_trailing_chars(cond, ifTrue, ifFalse) := result {
-    not cond
-    result = ifFalse
+    regex_fullmatch(pattern, value)
 }
 
 rule_ok(rule, env) {
@@ -316,7 +325,7 @@ idName_ok(pattern, "name", value) {
 }
 
 idName_ok(pattern, "re2", value) {
-    regex.match(pattern, value.name)
+    regex_fullmatch(pattern, value.name)
 }
 
 user_ok(user) {
@@ -682,13 +691,13 @@ security_ok(current_container) {
 mountSource_ok(constraint, source) {
     startswith(constraint, data.sandboxPrefix)
     newConstraint := replace(constraint, data.sandboxPrefix, input.sandboxDir)
-    regex.match(newConstraint, source)
+    regex_fullmatch(newConstraint, source)
 }
 
 mountSource_ok(constraint, source) {
     startswith(constraint, data.hugePagesPrefix)
     newConstraint := replace(constraint, data.hugePagesPrefix, input.hugePagesDir)
-    regex.match(newConstraint, source)
+    regex_fullmatch(newConstraint, source)
 }
 
 mountSource_ok(constraint, source) {
@@ -918,7 +927,7 @@ default plan9_mount := {"allowed": false}
 plan9_mount := {"metadata": [addPlan9Target], "allowed": true} {
     not plan9_mounted(input.target)
     some containerID, _ in data.metadata.matches
-    pattern := concat("", [input.rootPrefix, "/", containerID, input.mountPathPrefix])
+    pattern := concat("", ["^", input.rootPrefix, "/", containerID, input.mountPathPrefix, "$"])
     regex.match(pattern, input.target)
     addPlan9Target := {
         "name": "p9mounts",
