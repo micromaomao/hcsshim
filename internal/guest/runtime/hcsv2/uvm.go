@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,6 +53,32 @@ import (
 // UVMContainerID is the ContainerID that will be sent on any prot.MessageBase
 // for V2 where the specific message is targeted at the UVM itself.
 const UVMContainerID = "00000000-0000-0000-0000-000000000000"
+
+// Prevent path traversal via malformed container / sandbox IDs.  Container IDs
+// can be either UVMContainerID, or a 64 character hex string. This is also used
+// to check that sandbox IDs (which is also used in paths) are valid, which has
+// the same format.
+// TODO: We ought to enforce it has to be exactly 64 characters (or
+// UVMContainerID), but that breaks some tests which we have to fix first.
+var validContainerIDRegexRaw = `[0-9a-zA-Z\-_]{1,128}`
+var validContainerIDRegex = regexp.MustCompile("^" + validContainerIDRegexRaw + "$")
+
+// isSandboxId just changes the error message
+func checkValidContainerID(id string, isSandboxId bool) error {
+	if id == UVMContainerID {
+		return nil
+	}
+
+	if !validContainerIDRegex.MatchString(id) {
+		idtype := "container"
+		if isSandboxId {
+			idtype = "sandbox"
+		}
+		return errors.Errorf("invalid %s id: %s (must match %s)", idtype, id, validContainerIDRegex.String())
+	}
+
+	return nil
+}
 
 // VirtualPod represents a virtual pod that shares a UVM/Sandbox with other pods
 type VirtualPod struct {
@@ -251,6 +278,12 @@ func (h *Host) HasSecurityPolicy() bool {
 }
 
 func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VMHostedContainerSettingsV2) (_ *Container, err error) {
+	if h.HasSecurityPolicy() {
+		if err = checkValidContainerID(id, false); err != nil {
+			return nil, err
+		}
+	}
+
 	criType, isCRI := settings.OCISpecification.Annotations[annotations.KubernetesContainerType]
 
 	// Check for virtual pod annotation
@@ -398,6 +431,11 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		case "container":
 			sid, ok := settings.OCISpecification.Annotations[annotations.KubernetesSandboxID]
 			sandboxID = sid
+			if h.HasSecurityPolicy() {
+				if err = checkValidContainerID(sid, true); err != nil {
+					return nil, err
+				}
+			}
 			if !ok || sid == "" {
 				return nil, errors.Errorf("unsupported 'io.kubernetes.cri.sandbox-id': '%s'", sid)
 			}
@@ -580,6 +618,12 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 }
 
 func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *guestrequest.ModificationRequest) (retErr error) {
+	if h.HasSecurityPolicy() {
+		if err := checkValidContainerID(containerID, false); err != nil {
+			return err
+		}
+	}
+
 	switch req.ResourceType {
 	case guestresource.ResourceTypeSCSIDevice:
 		return modifySCSIDevice(ctx, req.RequestType, req.Settings.(*guestresource.SCSIDevice))
@@ -664,6 +708,12 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 }
 
 func (h *Host) modifyContainerSettings(ctx context.Context, containerID string, req *guestrequest.ModificationRequest) error {
+	if h.HasSecurityPolicy() {
+		if err := checkValidContainerID(containerID, false); err != nil {
+			return err
+		}
+	}
+
 	c, err := h.GetCreatedContainer(containerID)
 	if err != nil {
 		return err
@@ -1160,6 +1210,11 @@ func modifyCombinedLayers(
 ) (err error) {
 	switch rt {
 	case guestrequest.RequestTypeAdd:
+		if len(securityPolicy.EncodedSecurityPolicy()) > 0 {
+			if err := checkValidContainerID(cl.ContainerID, false); err != nil {
+				return err
+			}
+		}
 		layerPaths := make([]string, len(cl.Layers))
 		for i, layer := range cl.Layers {
 			layerPaths[i] = layer.Path
@@ -1186,6 +1241,8 @@ func modifyCombinedLayers(
 
 		return overlay.MountLayer(ctx, layerPaths, upperdirPath, workdirPath, cl.ContainerRootPath, readonly)
 	case guestrequest.RequestTypeRemove:
+		// cl.ContainerID is not set on remove requests, but rego checks that we can
+		// only umount previously mounted targets anyway
 		if err := securityPolicy.EnforceOverlayUnmountPolicy(ctx, cl.ContainerRootPath); err != nil {
 			return errors.Wrap(err, "overlay removal denied by policy")
 		}
