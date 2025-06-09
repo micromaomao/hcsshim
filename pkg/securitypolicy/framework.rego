@@ -41,6 +41,10 @@ device_mounted(target) {
     data.metadata.devices[target]
 }
 
+device_mounted(target) {
+    data.metadata.rw_devices[target]
+}
+
 default deviceHash_ok := false
 
 # test if a device hash exists as a layer in a policy container
@@ -60,6 +64,7 @@ deviceHash_ok {
 default mount_device := {"allowed": false}
 
 mount_device := {"metadata": [addDevice], "allowed": true} {
+    input.readonly
     not device_mounted(input.target)
     deviceHash_ok
     addDevice := {
@@ -70,12 +75,48 @@ mount_device := {"metadata": [addDevice], "allowed": true} {
     }
 }
 
+allowed_scratch_fs("ext4")
+allowed_scratch_fs("xfs")
+
+rwmount_device_encrypt_ok {
+    input.encrypted
+}
+
+rwmount_device_encrypt_ok {
+    allow_unencrypted_scratch
+}
+
+mount_device := {"metadata": [addDevice], "allowed": true} {
+    not input.readonly
+    not device_mounted(input.target)
+    rwmount_device_encrypt_ok
+    input.ensureFilesystem
+    allowed_scratch_fs(input.filesystem)
+    addDevice := {
+        "name": "rw_devices",
+        "action": "add",
+        "key": input.target,
+        "value": true,
+    }
+}
+
 default unmount_device := {"allowed": false}
 
 unmount_device := {"metadata": [removeDevice], "allowed": true} {
-    device_mounted(input.unmountTarget)
+    data.metadata.devices[input.unmountTarget]
+
     removeDevice := {
         "name": "devices",
+        "action": "remove",
+        "key": input.unmountTarget,
+    }
+}
+
+unmount_device := {"metadata": [removeRWDevice], "allowed": true} {
+    data.metadata.rw_devices[input.unmountTarget]
+
+    removeRWDevice := {
+        "name": "rw_devices",
         "action": "remove",
         "key": input.unmountTarget,
     }
@@ -1361,6 +1402,7 @@ reason := {
 
 errors["deviceHash not found"] {
     input.rule == "mount_device"
+    input.readonly
     not deviceHash_ok
 }
 
@@ -1372,6 +1414,26 @@ errors["device already mounted at path"] {
 errors["no device at path to unmount"] {
     input.rule == "unmount_device"
     not device_mounted(input.unmountTarget)
+}
+
+# Error string tested in azcri-containerd Test_RunPodSandboxNotAllowed_WithPolicy_EncryptedScratchPolicy
+errors["unencrypted scratch not allowed, non-readonly mount request for SCSI disk must request encryption"] {
+    input.rule == "mount_device"
+    not input.readonly
+    not allow_unencrypted_scratch
+    not input.encrypted
+}
+
+errors["ensureFilesystem must be set on rw device mounts"] {
+    input.rule == "mount_device"
+    not input.readonly
+    not input.ensureFilesystem
+}
+
+errors["rw device mounts uses a filesystem that is not allowed"] {
+    input.rule == "mount_device"
+    not input.readonly
+    not allowed_scratch_fs(input.filesystem)
 }
 
 errors["container already started"] {
