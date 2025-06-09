@@ -40,6 +40,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guest/storage/pmem"
 	"github.com/Microsoft/hcsshim/internal/guest/storage/scsi"
 	"github.com/Microsoft/hcsshim/internal/guest/transport"
+	"github.com/Microsoft/hcsshim/internal/guestpath"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/logfields"
 	"github.com/Microsoft/hcsshim/internal/oci"
@@ -277,6 +278,41 @@ func (h *Host) HasSecurityPolicy() bool {
 	return len(h.securityOptions.PolicyEnforcer.EncodedSecurityPolicy()) > 0
 }
 
+// For confidential containers, make sure that the host can't use unexpected
+// bundle paths / scratch dir / rootfs
+func checkContainerSettings(sandboxID, containerID string, settings *prot.VMHostedContainerSettingsV2) error {
+	if settings.OCISpecification == nil {
+		return errors.Errorf("OCISpecification is nil")
+	}
+	if settings.OCISpecification.Root == nil {
+		return errors.Errorf("OCISpecification.Root is nil")
+	}
+
+	// matches with CreateContainer / createLinuxContainerDocument in internal/hcsoci
+	containerRootInUVM := path.Join(guestpath.LCOWRootPrefixInUVM, containerID)
+	if settings.OCIBundlePath != containerRootInUVM {
+		return errors.Errorf("OCIBundlePath %q must equal expected %q",
+			settings.OCIBundlePath, containerRootInUVM)
+	}
+	expectedContainerRootfs := path.Join(containerRootInUVM, guestpath.RootfsPath)
+	if settings.OCISpecification.Root.Path != expectedContainerRootfs {
+		return errors.Errorf("OCISpecification.Root.Path %q must equal expected %q",
+			settings.OCISpecification.Root.Path, expectedContainerRootfs)
+	}
+
+	// matches with MountLCOWLayers
+	scratchDirPath := settings.ScratchDirPath
+	expectedScratchDirPathNonShared := path.Join(containerRootInUVM, guestpath.ScratchDir, containerID)
+	expectedScratchDirPathShared := path.Join(guestpath.LCOWRootPrefixInUVM, sandboxID, guestpath.ScratchDir, containerID)
+	if scratchDirPath != expectedScratchDirPathNonShared &&
+		scratchDirPath != expectedScratchDirPathShared {
+		return errors.Errorf("ScratchDirPath %q must be either %q or %q",
+			scratchDirPath, expectedScratchDirPathNonShared, expectedScratchDirPathShared)
+	}
+
+	return nil
+}
+
 func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VMHostedContainerSettingsV2) (_ *Container, err error) {
 	if h.HasSecurityPolicy() {
 		if err = checkValidContainerID(id, false); err != nil {
@@ -489,6 +525,12 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 			Source:      specGuest.SandboxLogsDir(sandboxID, virtualPodID),
 			Options:     []string{"bind"},
 		})
+	}
+
+	if h.HasSecurityPolicy() {
+		if err = checkContainerSettings(sandboxID, id, settings); err != nil {
+			return nil, err
+		}
 	}
 
 	user, groups, umask, err := h.securityOptions.PolicyEnforcer.GetUserInfo(settings.OCISpecification.Process, settings.OCISpecification.Root.Path)
