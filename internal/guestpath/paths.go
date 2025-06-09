@@ -38,4 +38,6 @@ const (
 	WCOWGlobalMountPrefixFmt = "C:\\mounts\\m%d"
 	// RootfsPath is part of the container's rootfs path
 	RootfsPath = "rootfs"
+	// ScratchDir is the name of the directory used for overlay upper and work
+	ScratchDir = "scratch"
 )
