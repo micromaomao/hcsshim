@@ -488,7 +488,21 @@ func (policy *regoEnforcer) redactSensitiveData(input inputData) inputData {
 func (policy *regoEnforcer) EnforceDeviceMountPolicy(ctx context.Context, target string, deviceHash string) error {
 	input := inputData{
 		"target":     target,
+		"readonly":   true,
 		"deviceHash": deviceHash,
+	}
+
+	_, err := policy.enforce(ctx, "mount_device", input)
+	return err
+}
+
+func (policy *regoEnforcer) EnforceRWDeviceMountPolicy(ctx context.Context, target string, encrypted, ensureFilesystem bool, filesystem string) error {
+	input := inputData{
+		"target":           target,
+		"readonly":         false,
+		"encrypted":        encrypted,
+		"ensureFilesystem": ensureFilesystem,
+		"filesystem":       filesystem,
 	}
 
 	_, err := policy.enforce(ctx, "mount_device", input)
