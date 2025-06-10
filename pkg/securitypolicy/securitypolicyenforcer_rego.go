@@ -486,10 +486,12 @@ func (policy *regoEnforcer) redactSensitiveData(input inputData) inputData {
 }
 
 func (policy *regoEnforcer) EnforceDeviceMountPolicy(ctx context.Context, target string, deviceHash string) error {
+	mountPathRegex := strings.Replace(guestpath.LCOWGlobalScsiMountPrefixFmt, "%d", "[0-9]+", 1)
 	input := inputData{
-		"target":     target,
-		"readonly":   true,
-		"deviceHash": deviceHash,
+		"target":         target,
+		"readonly":       true,
+		"deviceHash":     deviceHash,
+		"mountPathRegex": mountPathRegex,
 	}
 
 	_, err := policy.enforce(ctx, "mount_device", input)
@@ -497,12 +499,17 @@ func (policy *regoEnforcer) EnforceDeviceMountPolicy(ctx context.Context, target
 }
 
 func (policy *regoEnforcer) EnforceRWDeviceMountPolicy(ctx context.Context, target string, encrypted, ensureFilesystem bool, filesystem string) error {
+	// At this point we do not know what the container ID would be, so we allow
+	// any valid IDs.
+	containerIdRegex := "[0-9a-fA-F]{64}"
+	mountPathRegex := guestpath.LCOWRootPrefixInUVM + "/" + containerIdRegex
 	input := inputData{
 		"target":           target,
 		"readonly":         false,
 		"encrypted":        encrypted,
 		"ensureFilesystem": ensureFilesystem,
 		"filesystem":       filesystem,
+		"mountPathRegex":   mountPathRegex,
 	}
 
 	_, err := policy.enforce(ctx, "mount_device", input)
