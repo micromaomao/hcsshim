@@ -1251,11 +1251,40 @@ func modifyCombinedLayers(
 	scratchEncrypted bool,
 	securityPolicy securitypolicy.SecurityPolicyEnforcer,
 ) (err error) {
+	isConfidential := len(securityPolicy.EncodedSecurityPolicy()) > 0
+	containerID := cl.ContainerID
+
 	switch rt {
 	case guestrequest.RequestTypeAdd:
-		if len(securityPolicy.EncodedSecurityPolicy()) > 0 {
-			if err := checkValidContainerID(cl.ContainerID, false); err != nil {
+		if isConfidential {
+			if err := checkValidContainerID(containerID, false); err != nil {
 				return err
+			}
+
+			// We check this regardless of what the policy says, as long as we're in
+			// confidential mode.  This matches with checkContainerSettings called for
+			// container creation request.
+			expectedContainerRootfs := path.Join(guestpath.LCOWRootPrefixInUVM, containerID, guestpath.RootfsPath)
+			if cl.ContainerRootPath != expectedContainerRootfs {
+				return fmt.Errorf("combined layers target %q does not match expected path %q",
+					cl.ContainerRootPath, expectedContainerRootfs)
+			}
+
+			if cl.ScratchPath != "" {
+				// At this point, we do not know what the sandbox ID would be yet, so we
+				// have to allow anything reasonable.
+				scratchDirRegexStr := fmt.Sprintf(
+					"^%s/%s/%s/%s$",
+					guestpath.LCOWRootPrefixInUVM,
+					validContainerIDRegexRaw,
+					guestpath.ScratchDir,
+					containerID,
+				)
+				scratchDirRegex := regexp.MustCompile(scratchDirRegexStr)
+				if !scratchDirRegex.MatchString(cl.ScratchPath) {
+					return fmt.Errorf("scratch path %q must match regex %q",
+						cl.ScratchPath, scratchDirRegexStr)
+				}
 			}
 		}
 		layerPaths := make([]string, len(cl.Layers))
@@ -1278,7 +1307,7 @@ func modifyCombinedLayers(
 			}
 		}
 
-		if err := securityPolicy.EnforceOverlayMountPolicy(ctx, cl.ContainerID, layerPaths, cl.ContainerRootPath); err != nil {
+		if err := securityPolicy.EnforceOverlayMountPolicy(ctx, containerID, layerPaths, cl.ContainerRootPath); err != nil {
 			return fmt.Errorf("overlay creation denied by policy: %w", err)
 		}
 
