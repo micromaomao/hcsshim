@@ -245,6 +245,12 @@ func setupSandboxLogDir(sandboxID, virtualSandboxID string) error {
 // TODO: unify workload and standalone logic for non-sandbox features (e.g., block devices, huge pages, uVM mounts)
 // TODO(go1.24): use [os.Root] instead of `!strings.HasPrefix(<path>, <root>)`
 
+// Returns whether this host has a security policy set, i.e. if it's running
+// confidential containers.
+func (h *Host) HasSecurityPolicy() bool {
+	return len(h.securityOptions.PolicyEnforcer.EncodedSecurityPolicy()) > 0
+}
+
 func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VMHostedContainerSettingsV2) (_ *Container, err error) {
 	criType, isCRI := settings.OCISpecification.Annotations[annotations.KubernetesContainerType]
 
@@ -383,7 +389,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 
 			// Add SEV device when security policy is not empty, except when privileged annotation is
 			// set to "true", in which case all UVMs devices are added.
-			if len(h.securityOptions.PolicyEnforcer.EncodedSecurityPolicy()) > 0 && !oci.ParseAnnotationsBool(ctx,
+			if h.HasSecurityPolicy() && !oci.ParseAnnotationsBool(ctx,
 				settings.OCISpecification.Annotations, annotations.LCOWPrivileged, false) {
 				if err := specGuest.AddDevSev(ctx, settings.OCISpecification); err != nil {
 					log.G(ctx).WithError(err).Debug("failed to add SEV device")
