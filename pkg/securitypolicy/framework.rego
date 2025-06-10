@@ -63,10 +63,15 @@ deviceHash_ok {
 
 default mount_device := {"allowed": false}
 
+mount_target_ok {
+    regex_fullmatch(input.mountPathRegex, input.target)
+}
+
 mount_device := {"metadata": [addDevice], "allowed": true} {
     input.readonly
     not device_mounted(input.target)
     deviceHash_ok
+    mount_target_ok
     addDevice := {
         "name": "devices",
         "action": "add",
@@ -92,6 +97,7 @@ mount_device := {"metadata": [addDevice], "allowed": true} {
     rwmount_device_encrypt_ok
     input.ensureFilesystem
     allowed_scratch_fs(input.filesystem)
+    mount_target_ok
     addDevice := {
         "name": "rw_devices",
         "action": "add",
@@ -199,6 +205,10 @@ default mount_overlay := {"allowed": false}
 
 mount_overlay := {"metadata": [addMatches, addOverlayTarget], "allowed": true} {
     not overlay_exists
+
+    # sanity check, but due to checks in the Go code, this should always pass if
+    # `not overlay_exists` passes.
+    not overlay_mounted(input.target)
 
     containers := [container |
         container := candidate_containers[_]
@@ -1409,6 +1419,11 @@ errors["deviceHash not found"] {
 errors["device already mounted at path"] {
     input.rule == "mount_device"
     device_mounted(input.target)
+}
+
+errors["mountpoint invalid"] {
+    input.rule == "mount_device"
+    not mount_target_ok
 }
 
 errors["no device at path to unmount"] {
