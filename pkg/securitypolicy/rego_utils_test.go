@@ -6,6 +6,7 @@ package securitypolicy
 import (
 	"context"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -15,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -34,7 +36,6 @@ const (
 	maxExternalProcessesInGeneratedConstraints = 16
 	maxFragmentsInGeneratedConstraints         = 4
 	maxGeneratedExternalProcesses              = 12
-	maxGeneratedSandboxIDLength                = 32
 	maxGeneratedEnforcementPointLength         = 64
 	maxGeneratedPlan9Mounts                    = 8
 	maxGeneratedFragmentFeedLength             = 256
@@ -46,7 +47,6 @@ const (
 	minStringLength                           = 10
 	maxContainersInGeneratedConstraints       = 32
 	maxLayersInGeneratedContainer             = 32
-	maxGeneratedContainerID                   = 1000000
 	maxGeneratedCommandLength                 = 128
 	maxGeneratedCommandArgs                   = 12
 	maxGeneratedEnvironmentVariables          = 16
@@ -355,8 +355,11 @@ func mountImageForContainer(policy *regoEnforcer, container *securityPolicyConta
 		return "", fmt.Errorf("error creating valid overlay: %w", err)
 	}
 
+	overlayTarget := getOverlayMountTarget(containerID)
+
 	// see NOTE_TESTCOPY
-	err = policy.EnforceOverlayMountPolicy(ctx, containerID, copyStrings(layerPaths), testDataGenerator.uniqueMountTarget())
+	err = policy.EnforceOverlayMountPolicy(
+		ctx, containerID, copyStrings(layerPaths), overlayTarget)
 	if err != nil {
 		return "", fmt.Errorf("error mounting filesystem: %w", err)
 	}
@@ -1333,7 +1336,8 @@ func selectFragmentsFromConstraints(gc *generatedConstraints, numFragments int, 
 }
 
 func generateSandboxID(r *rand.Rand) string {
-	return randVariableString(r, maxGeneratedSandboxIDLength)
+	// Sandbox IDs has the same format as container IDs
+	return generateContainerID(r)
 }
 
 func generateEnforcementPoint(r *rand.Rand) string {
@@ -2535,6 +2539,9 @@ func buildEnvironmentVariablesFromEnvRules(rules []EnvRuleConfig, r *rand.Rand) 
 	return vars
 }
 
+// Only used for random mount targets or for the standard enforcer.  Rego policy
+// enforces proper targets that are e.g. created from
+// guestpath.LCOWGlobalScsiMountPrefixFmt
 func generateMountTarget(r *rand.Rand) string {
 	return randVariableString(r, maxGeneratedMountTargetLength)
 }
@@ -2563,8 +2570,12 @@ func selectRootHashFromConstraints(constraints *generatedConstraints, r *rand.Ra
 }
 
 func generateContainerID(r *rand.Rand) string {
-	id := atLeastOneAtMost(r, maxGeneratedContainerID)
-	return strconv.FormatInt(int64(id), 10)
+	idbytes := make([]byte, 32)
+	_, err := r.Read(idbytes)
+	if err != nil {
+		panic(fmt.Errorf("failed to generate random container ID: %w", err))
+	}
+	return hex.EncodeToString(idbytes)
 }
 
 func generateMounts(r *rand.Rand) []mountInternal {
@@ -2654,26 +2665,28 @@ func selectContainerFromContainerList(containers []*securityPolicyContainer, r *
 }
 
 type dataGenerator struct {
-	rng                *rand.Rand
-	mountTargets       stringSet
-	containerIDs       stringSet
-	sandboxIDs         stringSet
-	enforcementPoints  stringSet
-	fragmentIssuers    stringSet
-	fragmentFeeds      stringSet
-	fragmentNamespaces stringSet
+	rng                  *rand.Rand
+	layerMountTarget     stringSet
+	nextLayerMountTarget atomic.Uint64
+	containerIDs         stringSet
+	sandboxIDs           stringSet
+	enforcementPoints    stringSet
+	fragmentIssuers      stringSet
+	fragmentFeeds        stringSet
+	fragmentNamespaces   stringSet
 }
 
 func newDataGenerator(rng *rand.Rand) *dataGenerator {
 	return &dataGenerator{
-		rng:                rng,
-		mountTargets:       make(stringSet),
-		containerIDs:       make(stringSet),
-		sandboxIDs:         make(stringSet),
-		enforcementPoints:  make(stringSet),
-		fragmentIssuers:    make(stringSet),
-		fragmentFeeds:      make(stringSet),
-		fragmentNamespaces: make(stringSet),
+		rng:                  rng,
+		layerMountTarget:     make(stringSet),
+		nextLayerMountTarget: atomic.Uint64{},
+		containerIDs:         make(stringSet),
+		sandboxIDs:           make(stringSet),
+		enforcementPoints:    make(stringSet),
+		fragmentIssuers:      make(stringSet),
+		fragmentFeeds:        make(stringSet),
+		fragmentNamespaces:   make(stringSet),
 	}
 }
 
@@ -2687,12 +2700,27 @@ func (s *stringSet) randUnique(r *rand.Rand, generator func(*rand.Rand) string) 
 	}
 }
 
-func (gen *dataGenerator) uniqueMountTarget() string {
-	return gen.mountTargets.randUnique(gen.rng, generateMountTarget)
+// Generate a purely random mount target.  This will be rejected by rego.
+func (gen *dataGenerator) uniqueRandomMountTarget() string {
+	return gen.layerMountTarget.randUnique(gen.rng, generateMountTarget)
 }
 
 func (gen *dataGenerator) uniqueContainerID() string {
 	return gen.containerIDs.randUnique(gen.rng, generateContainerID)
+}
+
+func (gen *dataGenerator) uniqueLayerMountTarget() string {
+	idx := gen.nextLayerMountTarget.Add(1)
+	return fmt.Sprintf(guestpath.LCOWGlobalScsiMountPrefixFmt, idx)
+}
+
+func getScratchDiskMountTarget(containerID string) string {
+	return path.Join(guestpath.LCOWRootPrefixInUVM, containerID)
+}
+
+// Returns the roofs of a container.
+func getOverlayMountTarget(containerID string) string {
+	return path.Join(guestpath.LCOWRootPrefixInUVM, containerID, guestpath.RootfsPath)
 }
 
 func (gen *dataGenerator) createValidOverlayForContainer(enforcer SecurityPolicyEnforcer, container *securityPolicyContainer) ([]string, error) {
@@ -2701,7 +2729,7 @@ func (gen *dataGenerator) createValidOverlayForContainer(enforcer SecurityPolicy
 	overlay := make([]string, len(container.Layers))
 
 	for i := 0; i < len(container.Layers); i++ {
-		mount := gen.uniqueMountTarget()
+		mount := gen.uniqueLayerMountTarget()
 		err := enforcer.EnforceDeviceMountPolicy(ctx, mount, container.Layers[i])
 		if err != nil {
 			return overlay, err
@@ -2731,14 +2759,14 @@ func (gen *dataGenerator) invalidOverlaySameSizeWrongMounts(enforcer SecurityPol
 	overlay := make([]string, len(container.Layers))
 
 	for i := 0; i < len(container.Layers); i++ {
-		mount := gen.uniqueMountTarget()
+		mount := gen.uniqueLayerMountTarget()
 		err := enforcer.EnforceDeviceMountPolicy(ctx, mount, container.Layers[i])
 		if err != nil {
 			return overlay, err
 		}
 
 		// generate a random new mount point to cause an error
-		overlay[len(overlay)-i-1] = gen.uniqueMountTarget()
+		overlay[len(overlay)-i-1] = gen.uniqueLayerMountTarget()
 	}
 
 	return overlay, nil
@@ -2754,7 +2782,7 @@ func (gen *dataGenerator) invalidOverlayCorrectDevicesWrongOrderSomeMissing(enfo
 	var overlay []string
 
 	for i := 0; i < len(container.Layers); i++ {
-		mount := gen.uniqueMountTarget()
+		mount := gen.uniqueLayerMountTarget()
 		err := enforcer.EnforceDeviceMountPolicy(ctx, mount, container.Layers[i])
 		if err != nil {
 			return overlay, err
@@ -2775,12 +2803,12 @@ func (gen *dataGenerator) invalidOverlayRandomJunk(enforcer SecurityPolicyEnforc
 	overlay := make([]string, layersToCreate)
 
 	for i := 0; i < int(layersToCreate); i++ {
-		overlay[i] = gen.uniqueMountTarget()
+		overlay[i] = generateMountTarget(gen.rng)
 	}
 
 	// setup entirely different and "correct" expected mounting
 	for i := 0; i < len(container.Layers); i++ {
-		mount := gen.uniqueMountTarget()
+		mount := generateMountTarget(gen.rng)
 		err := enforcer.EnforceDeviceMountPolicy(ctx, mount, container.Layers[i])
 		if err != nil {
 			return overlay, err
