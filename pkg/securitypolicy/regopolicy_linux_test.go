@@ -3338,9 +3338,7 @@ func Test_Rego_Plan9MountPolicy_No_Matches(t *testing.T) {
 		tc.seccomp,
 	)
 
-	if err == nil {
-		t.Fatal("Policy enforcement unexpectedly was allowed")
-	}
+	assertDecisionJSONContains(t, err, "invalid mount list")
 }
 
 func Test_Rego_Plan9MountPolicy_Invalid(t *testing.T) {
@@ -3352,6 +3350,21 @@ func Test_Rego_Plan9MountPolicy_Invalid(t *testing.T) {
 	}
 
 	mount := randString(testRand, maxGeneratedMountSourceLength)
+	err = tc.policy.EnforcePlan9MountPolicy(gc.ctx, mount)
+	if err == nil {
+		t.Fatal("Policy enforcement unexpectedly was allowed", err)
+	}
+}
+
+func Test_Rego_Plan9MountPolicy_Invalid_PathTraversal(t *testing.T) {
+	gc := generateConstraints(testRand, maxContainersInGeneratedConstraints)
+
+	tc, err := setupPlan9MountTest(gc)
+	if err != nil {
+		t.Fatalf("unable to setup test: %v", err)
+	}
+
+	mount := tc.uvmPathForShare + "/../../bin"
 	err = tc.policy.EnforcePlan9MountPolicy(gc.ctx, mount)
 	if err == nil {
 		t.Fatal("Policy enforcement unexpectedly was allowed", err)
@@ -3393,9 +3406,7 @@ func Test_Rego_Plan9UnmountPolicy(t *testing.T) {
 		tc.seccomp,
 	)
 
-	if err == nil {
-		t.Fatal("Policy enforcement unexpectedly was allowed")
-	}
+	assertDecisionJSONContains(t, err, "invalid mount list")
 }
 
 func Test_Rego_Plan9UnmountPolicy_No_Matches(t *testing.T) {
@@ -3414,9 +3425,7 @@ func Test_Rego_Plan9UnmountPolicy_No_Matches(t *testing.T) {
 
 	badMount := randString(testRand, maxPlan9MountTargetLength)
 	err = tc.policy.EnforcePlan9UnmountPolicy(gc.ctx, badMount)
-	if err == nil {
-		t.Fatalf("Policy enforcement unexpectedly was allowed")
-	}
+	assertDecisionJSONContains(t, err, "no device at path to unmount")
 }
 
 func Test_Rego_GetPropertiesPolicy_On(t *testing.T) {
