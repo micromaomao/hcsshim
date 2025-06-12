@@ -2742,14 +2742,16 @@ func (gen *dataGenerator) createValidOverlayForContainer(enforcer SecurityPolicy
 }
 
 func (gen *dataGenerator) createInvalidOverlayForContainer(enforcer SecurityPolicyEnforcer, container *securityPolicyContainer) ([]string, error) {
-	method := gen.rng.Intn(3)
+	method := gen.rng.Intn(4)
 	switch method {
 	case 0:
 		return gen.invalidOverlaySameSizeWrongMounts(enforcer, container)
 	case 1:
 		return gen.invalidOverlayCorrectDevicesWrongOrderSomeMissing(enforcer, container)
-	default:
+	case 2:
 		return gen.invalidOverlayRandomJunk(enforcer, container)
+	default:
+		return gen.invalidOverlayRandomNoMount(enforcer, container)
 	}
 }
 
@@ -2808,11 +2810,22 @@ func (gen *dataGenerator) invalidOverlayRandomJunk(enforcer SecurityPolicyEnforc
 
 	// setup entirely different and "correct" expected mounting
 	for i := 0; i < len(container.Layers); i++ {
-		mount := generateMountTarget(gen.rng)
+		mount := gen.uniqueLayerMountTarget()
 		err := enforcer.EnforceDeviceMountPolicy(ctx, mount, container.Layers[i])
 		if err != nil {
 			return overlay, err
 		}
+	}
+
+	return overlay, nil
+}
+
+func (gen *dataGenerator) invalidOverlayRandomNoMount(enforcer SecurityPolicyEnforcer, container *securityPolicyContainer) ([]string, error) {
+	layersToCreate := gen.rng.Int31n(maxLayersInGeneratedContainer)
+	overlay := make([]string, layersToCreate)
+
+	for i := 0; i < int(layersToCreate); i++ {
+		overlay[i] = gen.uniqueLayerMountTarget()
 	}
 
 	return overlay, nil
