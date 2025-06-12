@@ -2034,7 +2034,7 @@ func assertDecisionJSONContains(t *testing.T, err error, expectedValues ...strin
 
 	for _, expected := range expectedValues {
 		if !strings.Contains(policyDecision, expected) {
-			t.Errorf("expected error to contain %q", expected)
+			t.Errorf("expected error to contain %q, but got %q", expected, policyDecision)
 			return false
 		}
 	}
