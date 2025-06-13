@@ -1137,6 +1137,9 @@ func modifyMappedVirtualDisk(
 			if err != nil {
 				return err
 			}
+			if mvd.Filesystem != "" && mvd.Filesystem != "ext4" {
+				return errors.Errorf("filesystem must be ext4 for read-only scsi mounts")
+			}
 		}
 	}
 	switch rt {
