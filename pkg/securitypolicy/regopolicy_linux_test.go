@@ -2124,8 +2124,8 @@ func Test_Rego_Enforcement_Point_Allowed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	input := make(map[string]interface{})
-	results, err := policy.applyDefaults("__fixture_for_allowed_test_false__", input)
+	results := make(rpi.RegoQueryResult)
+	results, err = policy.applyDefaults("__fixture_for_allowed_test_false__", nil, results)
 	if err != nil {
 		t.Fatalf("applied defaults for an enforcement point receieved an error: %v", err)
 	}
@@ -2140,8 +2140,8 @@ func Test_Rego_Enforcement_Point_Allowed(t *testing.T) {
 		t.Fatal("result of allowed for an available enforcement point was not the specified default (false)")
 	}
 
-	input = make(map[string]interface{})
-	results, err = policy.applyDefaults("__fixture_for_allowed_test_true__", input)
+	results = make(rpi.RegoQueryResult)
+	results, err = policy.applyDefaults("__fixture_for_allowed_test_true__", nil, results)
 	if err != nil {
 		t.Fatalf("applied defaults for an enforcement point receieved an error: %v", err)
 	}
