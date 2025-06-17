@@ -1000,20 +1000,28 @@ plan9_unmount := {"metadata": [removePlan9Target], "allowed": true} {
 }
 
 
-default enforcement_point_info := {"available": false, "default_results": {"allow": false}, "unknown": true, "invalid": false, "version_missing": false}
+default enforcement_point_info := {
+    "available": false,
+    "default_results": {"allow": false},
+    "unknown": true,
+    "invalid": false,
+    "version_missing": false,
+    "use_framework": false
+}
 
-enforcement_point_info := {"available": false, "default_results": {"allow": false}, "unknown": false, "invalid": false, "version_missing": true} {
+enforcement_point_info := {"available": false, "default_results": {"allow": false}, "unknown": false, "invalid": false, "version_missing": true, "use_framework": false} {
     policy_api_version == null
 }
 
-enforcement_point_info := {"available": available, "default_results": default_results, "unknown": false, "invalid": false, "version_missing": false} {
+enforcement_point_info := {"available": available, "default_results": default_results, "unknown": false, "invalid": false, "version_missing": false, "use_framework": use_framework} {
     enforcement_point := data.api.enforcement_points[input.name]
     semver.compare(data.api.version, enforcement_point.introducedVersion) >= 0
     available := semver.compare(policy_api_version, enforcement_point.introducedVersion) >= 0
     default_results := enforcement_point.default_results
+    use_framework := enforcement_point.use_framework
 }
 
-enforcement_point_info := {"available": false, "default_results": {"allow": false}, "unknown": false, "invalid": true, "version_missing": false} {
+enforcement_point_info := {"available": false, "default_results": {"allow": false}, "unknown": false, "invalid": true, "version_missing": false, "use_framework": false} {
     enforcement_point := data.api.enforcement_points[input.name]
     semver.compare(data.api.version, enforcement_point.introducedVersion) < 0
 }
