@@ -8,6 +8,7 @@ mount_overlay := {"allowed": true}
 create_container := {"allowed": true, "env_list": null, "allow_stdio_access": true}
 mount_cims := {"allowed": true}
 unmount_device := {"allowed": true}
+rw_unmount_device := {"allowed": true}
 unmount_overlay := {"allowed": true}
 exec_in_container := {"allowed": true, "env_list": null}
 exec_external := {"allowed": true, "env_list": null, "allow_stdio_access": true}
