@@ -68,7 +68,6 @@ mount_target_ok {
 }
 
 mount_device := {"metadata": [addDevice], "allowed": true} {
-    input.readonly
     not device_mounted(input.target)
     deviceHash_ok
     mount_target_ok
@@ -91,8 +90,9 @@ rwmount_device_encrypt_ok {
     allow_unencrypted_scratch
 }
 
-mount_device := {"metadata": [addDevice], "allowed": true} {
-    not input.readonly
+default rw_mount_device := {"allowed": false}
+
+rw_mount_device := {"metadata": [addDevice], "allowed": true} {
     not device_mounted(input.target)
     rwmount_device_encrypt_ok
     input.ensureFilesystem
@@ -1412,7 +1412,6 @@ reason := {
 
 errors["deviceHash not found"] {
     input.rule == "mount_device"
-    input.readonly
     not deviceHash_ok
 }
 
@@ -1422,7 +1421,7 @@ errors["device already mounted at path"] {
 }
 
 errors["mountpoint invalid"] {
-    input.rule == "mount_device"
+    input.rule in ["mount_device", "rw_mount_device"]
     not mount_target_ok
 }
 
@@ -1433,21 +1432,18 @@ errors["no device at path to unmount"] {
 
 # Error string tested in azcri-containerd Test_RunPodSandboxNotAllowed_WithPolicy_EncryptedScratchPolicy
 errors["unencrypted scratch not allowed, non-readonly mount request for SCSI disk must request encryption"] {
-    input.rule == "mount_device"
-    not input.readonly
+    input.rule == "rw_mount_device"
     not allow_unencrypted_scratch
     not input.encrypted
 }
 
 errors["ensureFilesystem must be set on rw device mounts"] {
-    input.rule == "mount_device"
-    not input.readonly
+    input.rule == "rw_mount_device"
     not input.ensureFilesystem
 }
 
 errors["rw device mounts uses a filesystem that is not allowed"] {
-    input.rule == "mount_device"
-    not input.readonly
+    input.rule == "rw_mount_device"
     not allowed_scratch_fs(input.filesystem)
 }
 

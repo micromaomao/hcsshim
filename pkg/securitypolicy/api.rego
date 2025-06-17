@@ -4,6 +4,7 @@ version := "@@API_VERSION@@"
 
 enforcement_points := {
     "mount_device": {"introducedVersion": "0.1.0", "default_results": {"allowed": false}},
+    "rw_mount_device": {"introducedVersion": "0.11.0", "default_results": {"allowed": true}},
     "mount_overlay": {"introducedVersion": "0.1.0", "default_results": {"allowed": false}},
     "mount_cims": {"introducedVersion": "0.11.0", "default_results": {"allowed": false}},
     "registry_changes": {"introducedVersion": "0.10.0", "default_results": {"allowed": false}},
