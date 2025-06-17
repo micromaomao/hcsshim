@@ -1154,8 +1154,14 @@ func modifyMappedVirtualDisk(
 		return nil
 	case guestrequest.RequestTypeRemove:
 		if mvd.MountPath != "" {
-			if err := securityPolicy.EnforceDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
-				return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
+			if mvd.ReadOnly {
+				if err := securityPolicy.EnforceDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
+					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
+				}
+			} else {
+				if err := securityPolicy.EnforceRWDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
+					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
+				}
 			}
 			config := &scsi.Config{
 				Encrypted:        mvd.Encrypted,

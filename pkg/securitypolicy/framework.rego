@@ -118,7 +118,9 @@ unmount_device := {"metadata": [removeDevice], "allowed": true} {
     }
 }
 
-unmount_device := {"metadata": [removeRWDevice], "allowed": true} {
+default rw_unmount_device := {"allowed": false}
+
+rw_unmount_device := {"metadata": [removeRWDevice], "allowed": true} {
     data.metadata.rw_devices[input.unmountTarget]
 
     removeRWDevice := {
@@ -1325,7 +1327,26 @@ errors["mountpoint invalid"] {
 
 errors["no device at path to unmount"] {
     input.rule == "unmount_device"
-    not device_mounted(input.unmountTarget)
+    not data.metadata.devices[input.unmountTarget]
+    not data.metadata.rw_devices[input.unmountTarget]
+}
+
+errors["received read-only unmount request, but device provided is read-write"] {
+    input.rule == "unmount_device"
+    not data.metadata.devices[input.unmountTarget]
+    data.metadata.rw_devices[input.unmountTarget]
+}
+
+errors["no device at path to unmount"] {
+    input.rule == "rw_unmount_device"
+    not data.metadata.devices[input.unmountTarget]
+    not data.metadata.rw_devices[input.unmountTarget]
+}
+
+errors["received read-write unmount request, but device provided is read-only"] {
+    input.rule == "rw_unmount_device"
+    not data.metadata.rw_devices[input.unmountTarget]
+    data.metadata.devices[input.unmountTarget]
 }
 
 # Error string tested in azcri-containerd Test_RunPodSandboxNotAllowed_WithPolicy_EncryptedScratchPolicy
