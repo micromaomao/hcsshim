@@ -59,7 +59,7 @@ const UVMContainerID = "00000000-0000-0000-0000-000000000000"
 // can be either UVMContainerID, or a 64 character hex string. This is also used
 // to check that sandbox IDs (which is also used in paths) are valid, which has
 // the same format.
-var validContainerIDRegexRaw = `[0-9a-fA-F]{64}`
+const validContainerIDRegexRaw = `[0-9a-fA-F]{64}`
 var validContainerIDRegex = regexp.MustCompile("^" + validContainerIDRegexRaw + "$")
 
 // isSandboxId just changes the error message
