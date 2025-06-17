@@ -293,7 +293,7 @@ func Test_Rego_EnforceDeviceUnmountPolicy_No_Matches(t *testing.T) {
 		}
 
 		target = getScratchDiskMountTarget(testDataGenerator.uniqueContainerID())
-		err = policy.EnforceDeviceUnmountPolicy(p.ctx, target)
+		err = policy.EnforceRWDeviceUnmountPolicy(p.ctx, target)
 		if !assertDecisionJSONContains(t, err, "no device at path to unmount") {
 			return false
 		}
@@ -378,7 +378,7 @@ func Test_Rego_EnforceDeviceMountPolicy_InvalidMountTarget_PathTraversal(t *test
 	assertDecisionJSONContains(t, err, "mountpoint invalid")
 }
 
-func deviceMountUnmountTest(t *testing.T, p *generatedConstraints, policy *regoEnforcer, mountScratchFirst, unmountScratchFirst bool) bool {
+func deviceMountUnmountTest(t *testing.T, p *generatedConstraints, policy *regoEnforcer, mountScratchFirst, unmountScratchFirst, testInvalidUnmount bool) bool {
 	container := selectContainerFromContainerList(p.containers, testRand)
 	containerID := testDataGenerator.uniqueContainerID()
 	rotarget := testDataGenerator.uniqueLayerMountTarget()
@@ -415,7 +415,7 @@ func deviceMountUnmountTest(t *testing.T, p *generatedConstraints, policy *regoE
 	}
 
 	unmountScratch := func() bool {
-		err = policy.EnforceDeviceUnmountPolicy(p.ctx, rwtarget)
+		err = policy.EnforceRWDeviceUnmountPolicy(p.ctx, rwtarget)
 		if err != nil {
 			t.Errorf("unable to unmount rw device: %v", err)
 			return false
@@ -442,6 +442,18 @@ func deviceMountUnmountTest(t *testing.T, p *generatedConstraints, policy *regoE
 		}
 	}
 
+	if testInvalidUnmount {
+		err = policy.EnforceDeviceUnmountPolicy(p.ctx, rotarget)
+		if !assertDecisionJSONContains(t, err, "no device at path to unmount") {
+			return false
+		}
+
+		err = policy.EnforceRWDeviceUnmountPolicy(p.ctx, rwtarget)
+		if !assertDecisionJSONContains(t, err, "no device at path to unmount") {
+			return false
+		}
+	}
+
 	return true
 }
 
@@ -454,7 +466,7 @@ func Test_Rego_EnforceRWDeviceMountPolicy_MountAndUnmount(t *testing.T) {
 			return false
 		}
 
-		return deviceMountUnmountTest(t, p, policy, mountScratchFirst, unmountScratchFirst)
+		return deviceMountUnmountTest(t, p, policy, mountScratchFirst, unmountScratchFirst, true)
 	}
 	if err := quick.Check(f, &quick.Config{MaxCount: 50, Rand: testRand}); err != nil {
 		t.Errorf("Test_Rego_EnforceRWDeviceMountPolicy_MountAndUnmount failed: %v", err)
@@ -585,7 +597,7 @@ scratch_unmount := {"allowed": true}
 			}
 
 			t.Run(fmt.Sprintf("mountScratchFirst=%t, unmountScratchFirst=%t", b1, b2), func(t *testing.T) {
-				deviceMountUnmountTest(t, p, policy, b1, b2)
+				deviceMountUnmountTest(t, p, policy, b1, b2, false)
 			})
 		}
 	}
@@ -678,7 +690,7 @@ reason := {"errors": data.framework.errors}
 			}
 
 			t.Run(fmt.Sprintf("mountScratchFirst=%t, unmountScratchFirst=%t", b1, b2), func(t *testing.T) {
-				deviceMountUnmountTest(t, p, policy, b1, b2)
+				deviceMountUnmountTest(t, p, policy, b1, b2, true)
 			})
 		}
 	}
@@ -718,7 +730,7 @@ func Test_Rego_EnforceRWDeviceMountPolicy_OpenDoor(t *testing.T) {
 		return
 	}
 
-	deviceMountUnmountTest(t, p, policy, true, true)
+	deviceMountUnmountTest(t, p, policy, true, true, false)
 
 	ensureFileSystem := false
 	encrypted := false
@@ -727,6 +739,11 @@ func Test_Rego_EnforceRWDeviceMountPolicy_OpenDoor(t *testing.T) {
 	err = policy.EnforceRWDeviceMountPolicy(p.ctx, target, encrypted, ensureFileSystem, filesystem)
 	if err != nil {
 		t.Errorf("unexpected error mounting rw device: %v", err)
+	}
+
+	err = policy.EnforceRWDeviceUnmountPolicy(p.ctx, target)
+	if err != nil {
+		t.Errorf("unexpected error unmounting rw device: %v", err)
 	}
 }
 
@@ -4758,7 +4775,7 @@ func Test_Rego_Scratch_Unmount_Policy(t *testing.T) {
 				t.Fatalf("scratch_unmount policy enforcement unexpectedly was denied: %s", err)
 			}
 
-			err = smConfig.policy.EnforceDeviceUnmountPolicy(gc.ctx, scratchDiskMount)
+			err = smConfig.policy.EnforceRWDeviceUnmountPolicy(gc.ctx, scratchDiskMount)
 			if err != nil {
 				t.Fatalf("device_unmount policy enforcement unexpectedly was denied: %s", err)
 			}

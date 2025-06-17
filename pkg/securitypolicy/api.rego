@@ -9,6 +9,7 @@ enforcement_points := {
     "mount_cims": {"introducedVersion": "0.11.0", "default_results": {"allowed": false}, "use_framework": false},
     "create_container": {"introducedVersion": "0.1.0", "default_results": {"allowed": false, "env_list": null, "allow_stdio_access": false}, "use_framework": false},
     "unmount_device": {"introducedVersion": "0.2.0", "default_results": {"allowed": true}, "use_framework": false},
+    "rw_unmount_device": {"introducedVersion": "0.11.0", "default_results": {}, "use_framework": true},
     "unmount_overlay": {"introducedVersion": "0.6.0", "default_results": {"allowed": true}, "use_framework": false},
     "exec_in_container": {"introducedVersion": "0.2.0", "default_results": {"allowed": true, "env_list": null}, "use_framework": false},
     "exec_external": {"introducedVersion": "0.3.0", "default_results": {"allowed": true, "env_list": null, "allow_stdio_access": false}, "use_framework": false},

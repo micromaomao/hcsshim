@@ -810,6 +810,15 @@ func (policy *regoEnforcer) EnforceDeviceUnmountPolicy(ctx context.Context, unmo
 	return err
 }
 
+func (policy *regoEnforcer) EnforceRWDeviceUnmountPolicy(ctx context.Context, unmountTarget string) error {
+	input := inputData{
+		"unmountTarget": unmountTarget,
+	}
+
+	_, err := policy.enforce(ctx, "rw_unmount_device", input)
+	return err
+}
+
 func appendMountData(mountData []interface{}, mounts []oci.Mount) []interface{} {
 	for _, mount := range mounts {
 		mountData = append(mountData, inputData{
