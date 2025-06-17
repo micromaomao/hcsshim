@@ -107,7 +107,7 @@ func Test_MarshalRego_Policy(t *testing.T) {
 		_, err = newRegoPolicy(expected, defaultMounts, privilegedMounts, testOSType)
 
 		if err != nil {
-			t.Errorf("unable to convert policy to rego: %v", err)
+			t.Errorf("cannot make rego policy from constraints: %v", err)
 			return false
 		}
 
@@ -194,7 +194,7 @@ func Test_Rego_EnforceDeviceMountPolicy_No_Matches(t *testing.T) {
 		policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 
 		if err != nil {
-			t.Errorf("unable to convert policy to rego: %v", err)
+			t.Errorf("cannot make rego policy from constraints: %v", err)
 			return false
 		}
 
@@ -220,7 +220,7 @@ func Test_Rego_EnforceDeviceMountPolicy_Matches(t *testing.T) {
 		policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 
 		if err != nil {
-			t.Errorf("unable to convert policy to rego: %v", err)
+			t.Errorf("cannot make rego policy from constraints: %v", err)
 			return false
 		}
 
@@ -312,7 +312,7 @@ func Test_Rego_EnforceDeviceMountPolicy_Duplicate_Device_Target(t *testing.T) {
 		policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 
 		if err != nil {
-			t.Errorf("unable to convert policy to rego: %v", err)
+			t.Errorf("cannot make rego policy from constraints: %v", err)
 			return false
 		}
 
@@ -344,7 +344,7 @@ func Test_Rego_EnforceDeviceMountPolicy_InvalidMountTarget(t *testing.T) {
 		securityPolicy := p.toPolicy()
 		policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 		if err != nil {
-			t.Errorf("unable to convert policy to rego: %v", err)
+			t.Errorf("cannot make rego policy from constraints: %v", err)
 			return false
 		}
 
@@ -366,7 +366,7 @@ func Test_Rego_EnforceDeviceMountPolicy_InvalidMountTarget_PathTraversal(t *test
 	securityPolicy := p.toPolicy()
 	policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 	if err != nil {
-		t.Errorf("unable to create rego policy: %v", err)
+		t.Errorf("cannot make rego policy from constraints: %v", err)
 		return
 	}
 
@@ -383,7 +383,7 @@ func Test_Rego_EnforceRWDeviceMountPolicy_MountAndUnmount(t *testing.T) {
 		securityPolicy := p.toPolicy()
 		policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 		if err != nil {
-			t.Errorf("unable to convert policy to rego: %v", err)
+			t.Errorf("cannot make rego policy from constraints: %v", err)
 			return false
 		}
 
@@ -460,7 +460,7 @@ func Test_Rego_EnforceRWDeviceMountPolicy_InvalidTarget(t *testing.T) {
 		securityPolicy := p.toPolicy()
 		policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 		if err != nil {
-			t.Errorf("unable to convert policy to rego: %v", err)
+			t.Errorf("cannot make rego policy from constraints: %v", err)
 			return false
 		}
 
@@ -483,7 +483,7 @@ func Test_Rego_EnforceRWDeviceMountPolicy_MissingEnsureFilesystem(t *testing.T) 
 		securityPolicy := p.toPolicy()
 		policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 		if err != nil {
-			t.Errorf("unable to convert policy to rego: %v", err)
+			t.Errorf("cannot make rego policy from constraints: %v", err)
 			return false
 		}
 
@@ -506,7 +506,7 @@ func Test_Rego_EnforceRWDeviceMountPolicy_DontAllowUnencrypted(t *testing.T) {
 	securityPolicy := p.toPolicy()
 	policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 	if err != nil {
-		t.Errorf("unable to convert policy to rego: %v", err)
+		t.Errorf("cannot make rego policy from constraints: %v", err)
 		return
 	}
 
@@ -523,7 +523,7 @@ func Test_Rego_EnforceRWDeviceMountPolicy_InvalidFilesystem(t *testing.T) {
 	securityPolicy := p.toPolicy()
 	policy, err := newRegoPolicy(securityPolicy.marshalRego(), []oci.Mount{}, []oci.Mount{}, testOSType)
 	if err != nil {
-		t.Errorf("unable to convert policy to rego: %v", err)
+		t.Errorf("cannot make rego policy from constraints: %v", err)
 		return
 	}
 
