@@ -355,6 +355,12 @@ func mountImageForContainer(policy *regoEnforcer, container *securityPolicyConta
 		return "", fmt.Errorf("error creating valid overlay: %w", err)
 	}
 
+	scratchDisk := getScratchDiskMountTarget(containerID)
+	err = policy.EnforceRWDeviceMountPolicy(ctx, scratchDisk, true, true, "xfs")
+	if err != nil {
+		return "", fmt.Errorf("error mounting scratch disk: %w", err)
+	}
+
 	overlayTarget := getOverlayMountTarget(containerID)
 
 	// see NOTE_TESTCOPY
