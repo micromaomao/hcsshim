@@ -710,6 +710,26 @@ reason := {"errors": data.framework.errors}
 	assertDecisionJSONContains(t, err, "unencrypted scratch not allowed, non-readonly mount request for SCSI disk must request encryption")
 }
 
+func Test_Rego_EnforceRWDeviceMountPolicy_OpenDoor(t *testing.T) {
+	p := generateConstraints(testRand, 1)
+	policy, err := newRegoPolicy(openDoorRego, []oci.Mount{}, []oci.Mount{}, testOSType)
+	if err != nil {
+		t.Errorf("cannot compile open door rego policy: %v", err)
+		return
+	}
+
+	deviceMountUnmountTest(t, p, policy, true, true)
+
+	ensureFileSystem := false
+	encrypted := false
+	filesystem := "zfs"
+	target := "/bin"
+	err = policy.EnforceRWDeviceMountPolicy(p.ctx, target, encrypted, ensureFileSystem, filesystem)
+	if err != nil {
+		t.Errorf("unexpected error mounting rw device: %v", err)
+	}
+}
+
 // Verify that RegoSecurityPolicyEnforcer.EnforceOverlayMountPolicy will
 // return an error when there's no matching overlay targets.
 func Test_Rego_EnforceOverlayMountPolicy_No_Matches(t *testing.T) {
