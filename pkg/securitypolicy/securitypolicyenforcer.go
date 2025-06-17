@@ -61,6 +61,7 @@ type SecurityPolicyEnforcer interface {
 	EnforceDeviceMountPolicy(ctx context.Context, target string, deviceHash string) (err error)
 	EnforceRWDeviceMountPolicy(ctx context.Context, target string, encrypted, ensureFilesystem bool, filesystem string) (err error)
 	EnforceDeviceUnmountPolicy(ctx context.Context, unmountTarget string) (err error)
+	EnforceRWDeviceUnmountPolicy(ctx context.Context, unmountTarget string) (err error)
 	EnforceOverlayMountPolicy(ctx context.Context, containerID string, layerPaths []string, target string) (err error)
 	EnforceOverlayUnmountPolicy(ctx context.Context, target string) (err error)
 	EnforceCreateContainerPolicy(
@@ -210,6 +211,10 @@ func (OpenDoorSecurityPolicyEnforcer) EnforceDeviceUnmountPolicy(context.Context
 	return nil
 }
 
+func (OpenDoorSecurityPolicyEnforcer) EnforceRWDeviceUnmountPolicy(context.Context, string) error {
+	return nil
+}
+
 func (OpenDoorSecurityPolicyEnforcer) EnforceOverlayMountPolicy(context.Context, string, []string, string) error {
 	return nil
 }
@@ -333,6 +338,10 @@ func (ClosedDoorSecurityPolicyEnforcer) EnforceRWDeviceMountPolicy(context.Conte
 
 func (ClosedDoorSecurityPolicyEnforcer) EnforceDeviceUnmountPolicy(context.Context, string) error {
 	return errors.New("unmounting is denied by policy")
+}
+
+func (ClosedDoorSecurityPolicyEnforcer) EnforceRWDeviceUnmountPolicy(context.Context, string) error {
+	return errors.New("Read-write device unmounting is denied by policy")
 }
 
 func (ClosedDoorSecurityPolicyEnforcer) EnforceOverlayMountPolicy(context.Context, string, []string, string) error {

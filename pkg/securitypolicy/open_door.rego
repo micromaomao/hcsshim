@@ -9,6 +9,7 @@ create_container := {"allowed": true, "env_list": null, "allow_stdio_access": tr
 mount_cims := {"allowed": true}
 registry_changes := {"allowed": true}
 unmount_device := {"allowed": true}
+rw_unmount_device := {"allowed": true}
 unmount_overlay := {"allowed": true}
 exec_in_container := {"allowed": true, "env_list": null}
 exec_external := {"allowed": true, "env_list": null, "allow_stdio_access": true}
