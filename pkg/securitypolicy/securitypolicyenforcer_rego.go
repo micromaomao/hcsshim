@@ -489,7 +489,6 @@ func (policy *regoEnforcer) EnforceDeviceMountPolicy(ctx context.Context, target
 	mountPathRegex := strings.Replace(guestpath.LCOWGlobalScsiMountPrefixFmt, "%d", "[0-9]+", 1)
 	input := inputData{
 		"target":         target,
-		"readonly":       true,
 		"deviceHash":     deviceHash,
 		"mountPathRegex": mountPathRegex,
 	}
@@ -505,14 +504,13 @@ func (policy *regoEnforcer) EnforceRWDeviceMountPolicy(ctx context.Context, targ
 	mountPathRegex := guestpath.LCOWRootPrefixInUVM + "/" + containerIdRegex
 	input := inputData{
 		"target":           target,
-		"readonly":         false,
 		"encrypted":        encrypted,
 		"ensureFilesystem": ensureFilesystem,
 		"filesystem":       filesystem,
 		"mountPathRegex":   mountPathRegex,
 	}
 
-	_, err := policy.enforce(ctx, "mount_device", input)
+	_, err := policy.enforce(ctx, "rw_mount_device", input)
 	return err
 }
 
