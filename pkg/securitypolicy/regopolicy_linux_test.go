@@ -378,6 +378,73 @@ func Test_Rego_EnforceDeviceMountPolicy_InvalidMountTarget_PathTraversal(t *test
 	assertDecisionJSONContains(t, err, "mountpoint invalid")
 }
 
+func deviceMountUnmountTest(t *testing.T, p *generatedConstraints, policy *regoEnforcer, mountScratchFirst, unmountScratchFirst bool) bool {
+	container := selectContainerFromContainerList(p.containers, testRand)
+	containerID := testDataGenerator.uniqueContainerID()
+	rotarget := testDataGenerator.uniqueLayerMountTarget()
+	rwtarget := getScratchDiskMountTarget(containerID)
+
+	var err error
+
+	mountScratch := func() bool {
+		err = policy.EnforceRWDeviceMountPolicy(p.ctx, rwtarget, true, true, "xfs")
+		if err != nil {
+			t.Errorf("unable to mount rw device: %v", err)
+			return false
+		}
+		return true
+	}
+
+	mountLayer := func() bool {
+		err = policy.EnforceDeviceMountPolicy(p.ctx, rotarget, container.Layers[0])
+		if err != nil {
+			t.Errorf("unable to mount ro device: %v", err)
+			return false
+		}
+		return true
+	}
+
+	if mountScratchFirst {
+		if !mountScratch() || !mountLayer() {
+			return false
+		}
+	} else {
+		if !mountLayer() || !mountScratch() {
+			return false
+		}
+	}
+
+	unmountScratch := func() bool {
+		err = policy.EnforceDeviceUnmountPolicy(p.ctx, rwtarget)
+		if err != nil {
+			t.Errorf("unable to unmount rw device: %v", err)
+			return false
+		}
+		return true
+	}
+
+	unmountLayer := func() bool {
+		err = policy.EnforceDeviceUnmountPolicy(p.ctx, rotarget)
+		if err != nil {
+			t.Errorf("unable to unmount ro device: %v", err)
+			return false
+		}
+		return true
+	}
+
+	if unmountScratchFirst {
+		if !unmountScratch() || !unmountLayer() {
+			return false
+		}
+	} else {
+		if !unmountLayer() || !unmountScratch() {
+			return false
+		}
+	}
+
+	return true
+}
+
 func Test_Rego_EnforceRWDeviceMountPolicy_MountAndUnmount(t *testing.T) {
 	f := func(p *generatedConstraints, mountScratchFirst, unmountScratchFirst bool) bool {
 		securityPolicy := p.toPolicy()
@@ -387,68 +454,7 @@ func Test_Rego_EnforceRWDeviceMountPolicy_MountAndUnmount(t *testing.T) {
 			return false
 		}
 
-		container := selectContainerFromContainerList(p.containers, testRand)
-		containerID := testDataGenerator.uniqueContainerID()
-		rotarget := testDataGenerator.uniqueLayerMountTarget()
-		rwtarget := getScratchDiskMountTarget(containerID)
-
-		mountScratch := func() bool {
-			err = policy.EnforceRWDeviceMountPolicy(p.ctx, rwtarget, true, true, "xfs")
-			if err != nil {
-				t.Errorf("unable to mount rw device: %v", err)
-				return false
-			}
-			return true
-		}
-
-		mountLayer := func() bool {
-			err = policy.EnforceDeviceMountPolicy(p.ctx, rotarget, container.Layers[0])
-			if err != nil {
-				t.Errorf("unable to mount ro device: %v", err)
-				return false
-			}
-			return true
-		}
-
-		if mountScratchFirst {
-			if !mountScratch() || !mountLayer() {
-				return false
-			}
-		} else {
-			if !mountLayer() || !mountScratch() {
-				return false
-			}
-		}
-
-		unmountScratch := func() bool {
-			err = policy.EnforceDeviceUnmountPolicy(p.ctx, rwtarget)
-			if err != nil {
-				t.Errorf("unable to unmount rw device: %v", err)
-				return false
-			}
-			return true
-		}
-
-		unmountLayer := func() bool {
-			err = policy.EnforceDeviceUnmountPolicy(p.ctx, rotarget)
-			if err != nil {
-				t.Errorf("unable to unmount ro device: %v", err)
-				return false
-			}
-			return true
-		}
-
-		if unmountScratchFirst {
-			if !unmountScratch() || !unmountLayer() {
-				return false
-			}
-		} else {
-			if !unmountLayer() || !unmountScratch() {
-				return false
-			}
-		}
-
-		return true
+		return deviceMountUnmountTest(t, p, policy, mountScratchFirst, unmountScratchFirst)
 	}
 	if err := quick.Check(f, &quick.Config{MaxCount: 50, Rand: testRand}); err != nil {
 		t.Errorf("Test_Rego_EnforceRWDeviceMountPolicy_MountAndUnmount failed: %v", err)
@@ -539,6 +545,169 @@ func Test_Rego_EnforceRWDeviceMountPolicy_InvalidFilesystem(t *testing.T) {
 		err = policy.EnforceRWDeviceMountPolicy(p.ctx, target, true, true, filesystem)
 		assertDecisionJSONContains(t, err, "rw device mounts uses a filesystem that is not allowed")
 	}
+}
+
+// Test that for an older allow all policy (api version < 0.11.0) that does not
+// have rw_mount_device, the use_framework passthrough is done correctly,
+// allowing enforcing rw mounts.
+func Test_Rego_EnforceRWDeviceMountPolicy_Compat_0_10_0_allow_all(t *testing.T) {
+	p := generateConstraints(testRand, 1)
+	regoPolicy := `
+package policy
+
+api_version := "0.10.0"
+framework_version := "0.3.0"
+
+mount_device := {"allowed": true}
+mount_overlay := {"allowed": true}
+create_container := {"allowed": true, "env_list": null, "allow_stdio_access": true}
+unmount_device := {"allowed": true}
+unmount_overlay := {"allowed": true}
+exec_in_container := {"allowed": true, "env_list": null}
+exec_external := {"allowed": true, "env_list": null, "allow_stdio_access": true}
+shutdown_container := {"allowed": true}
+signal_container_process := {"allowed": true}
+plan9_mount := {"allowed": true}
+plan9_unmount := {"allowed": true}
+get_properties := {"allowed": true}
+dump_stacks := {"allowed": true}
+runtime_logging := {"allowed": true}
+load_fragment := {"allowed": true}
+scratch_mount := {"allowed": true}
+scratch_unmount := {"allowed": true}
+`
+	for _, b1 := range []bool{true, false} {
+		for _, b2 := range []bool{true, false} {
+			policy, err := newRegoPolicy(regoPolicy, []oci.Mount{}, []oci.Mount{}, testOSType)
+			if err != nil {
+				t.Errorf("cannot compile rego policy: %v", err)
+				return
+			}
+
+			t.Run(fmt.Sprintf("mountScratchFirst=%t, unmountScratchFirst=%t", b1, b2), func(t *testing.T) {
+				deviceMountUnmountTest(t, p, policy, b1, b2)
+			})
+		}
+	}
+}
+
+// Test that for an older policy (api version < 0.11.0) that does not have
+// rw_mount_device, the use_framework passthrough is done correctly, allowing
+// enforcing rw mounts.
+func Test_Rego_EnforceRWDeviceMountPolicy_Compat_0_10_0(t *testing.T) {
+	p := generateConstraints(testRand, 1)
+	regoPolicy := `
+package policy
+
+api_version := "0.10.0"
+framework_version := "0.3.0"
+
+containers := [
+  {
+    "allow_elevated": false,
+    "allow_stdio_access": true,
+    "capabilities": {
+      "ambient": [],
+      "bounding": [],
+      "effective": [],
+      "inheritable": [],
+      "permitted": []
+    },
+    "command": [ "bash" ],
+    "env_rules": [],
+    "exec_processes": [],
+    "layers": [
+      "` + p.containers[0].Layers[0] + `",
+    ],
+    "mounts": [],
+    "no_new_privileges": false,
+    "seccomp_profile_sha256": "",
+    "signals": [],
+    "user": {
+      "group_idnames": [
+        {
+          "pattern": "",
+          "strategy": "any"
+        }
+      ],
+      "umask": "0022",
+      "user_idname": {
+        "pattern": "",
+        "strategy": "any"
+      }
+    },
+    "working_dir": "/"
+	}
+]
+
+allow_properties_access := true
+allow_dump_stacks := false
+allow_runtime_logging := false
+allow_environment_variable_dropping := true
+allow_unencrypted_scratch := false
+allow_capability_dropping := true
+
+mount_device := data.framework.mount_device
+unmount_device := data.framework.unmount_device
+mount_overlay := data.framework.mount_overlay
+unmount_overlay := data.framework.unmount_overlay
+create_container := data.framework.create_container
+exec_in_container := data.framework.exec_in_container
+exec_external := {"allowed": true,
+                  "allow_stdio_access": true,
+                  "env_list": input.envList}
+shutdown_container := data.framework.shutdown_container
+signal_container_process := data.framework.signal_container_process
+plan9_mount := data.framework.plan9_mount
+plan9_unmount := data.framework.plan9_unmount
+get_properties := data.framework.get_properties
+dump_stacks := data.framework.dump_stacks
+runtime_logging := data.framework.runtime_logging
+load_fragment := data.framework.load_fragment
+scratch_mount := data.framework.scratch_mount
+scratch_unmount := data.framework.scratch_unmount
+
+reason := {"errors": data.framework.errors}
+`
+	for _, b1 := range []bool{true, false} {
+		for _, b2 := range []bool{true, false} {
+			policy, err := newRegoPolicy(regoPolicy, []oci.Mount{}, []oci.Mount{}, testOSType)
+			if err != nil {
+				t.Errorf("cannot compile rego policy: %v", err)
+				return
+			}
+
+			t.Run(fmt.Sprintf("mountScratchFirst=%t, unmountScratchFirst=%t", b1, b2), func(t *testing.T) {
+				deviceMountUnmountTest(t, p, policy, b1, b2)
+			})
+		}
+	}
+
+	policy, err := newRegoPolicy(regoPolicy, []oci.Mount{}, []oci.Mount{}, testOSType)
+	if err != nil {
+		t.Errorf("cannot compile rego policy: %v", err)
+		return
+	}
+
+	// Invalid mount target
+	target := testDataGenerator.uniqueRandomMountTarget()
+	filesystem := "xfs"
+	encrypted := true
+	ensureFileSystem := true
+	err = policy.EnforceRWDeviceMountPolicy(p.ctx, target, encrypted, ensureFileSystem, filesystem)
+	assertDecisionJSONContains(t, err, "mountpoint invalid")
+
+	// Missing ensureFilesystem
+	ensureFileSystem = false
+	target = getScratchDiskMountTarget(testDataGenerator.uniqueContainerID())
+	err = policy.EnforceRWDeviceMountPolicy(p.ctx, target, encrypted, ensureFileSystem, filesystem)
+	assertDecisionJSONContains(t, err, "ensureFilesystem must be set on rw device mounts")
+
+	// Unencrypted scratch not allowed
+	ensureFileSystem = true
+	encrypted = false
+	err = policy.EnforceRWDeviceMountPolicy(p.ctx, target, encrypted, ensureFileSystem, filesystem)
+	assertDecisionJSONContains(t, err, "unencrypted scratch not allowed, non-readonly mount request for SCSI disk must request encryption")
 }
 
 // Verify that RegoSecurityPolicyEnforcer.EnforceOverlayMountPolicy will
