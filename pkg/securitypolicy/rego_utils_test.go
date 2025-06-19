@@ -1625,6 +1625,13 @@ func copyStrings(values []string) []string {
 //go:embed api_test.rego
 var apiTestCode string
 
+//go:embed policy_v0.10.0_api_test.rego
+var policyWith_0_10_0_apiTestCode string
+
+func getPolicyCode_0_10_0(layerHash string) string {
+	return strings.Replace(policyWith_0_10_0_apiTestCode, "@@CONTAINER_LAYER_HASH@@", layerHash, 1)
+}
+
 func (p *regoEnforcer) injectTestAPI() error {
 	p.rego.RemoveModule("api.rego")
 	p.rego.AddModule("api.rego", &rpi.RegoModule{Namespace: "api", Code: apiTestCode})
