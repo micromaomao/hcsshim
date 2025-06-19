@@ -1152,6 +1152,125 @@ func Test_Rego_EnforceEnvironmentVariablePolicy_NotAllMatches(t *testing.T) {
 	}
 }
 
+func Test_Rego_EnforceEnvironmentVariablePolicy_RegexPatterns(t *testing.T) {
+	testCases := []struct {
+		rule             string
+		expectMatches    []string
+		expectNotMatches []string
+		skipAddAnchors   bool
+	}{
+		{
+			rule:             "PREFIX_.+=.+",
+			expectMatches:    []string{"PREFIX_FOO=BAR"},
+			expectNotMatches: []string{"PREFIX_FOO=", "SOMETHING=ELSE", "SOMETHING_PREFIX_FOO=BAR"},
+		},
+		{
+			rule:             "PREFIX_.+=.+BAR",
+			expectMatches:    []string{"PREFIX_FOO=FOO_BAR"},
+			expectNotMatches: []string{"PREFIX_FOO=BAR_FOO"},
+		},
+		{
+			rule:             "SIMPLE_VAR=.+",
+			expectMatches:    []string{"SIMPLE_VAR=FOO"},
+			expectNotMatches: []string{"SIMPLE_VAR=", "SOMETHING=ELSE", "SOMETHING=ELSE:SIMPLE_VAR=FOO", "SIMPLE_VAR_FOO=BAR", "SIMPLE_VAR"},
+		},
+		{
+			rule:             "SIMPLE_VAR=.*",
+			expectMatches:    []string{"SIMPLE_VAR=FOO", "SIMPLE_VAR="},
+			expectNotMatches: []string{"SIMPLE_VAR"},
+		},
+		{
+			rule:             "SIMPLE_VAR=",
+			expectMatches:    []string{"SIMPLE_VAR="},
+			expectNotMatches: []string{"SIMPLE_VAR", "SIMPLE_VAR=FOO"},
+		},
+		{
+			rule:             "",
+			expectMatches:    []string{},
+			expectNotMatches: []string{"ANYTHING", "ANYTHING=ELSE"},
+		},
+		{
+			rule:             "(^PREFIX1|^PREFIX2)=.+$",
+			expectMatches:    []string{"PREFIX1=FOO", "PREFIX2=BAR"},
+			expectNotMatches: []string{"PREFIX3_FOO=BAR", "PREFIX1=", "SOMETHING=ELSE", ""},
+			skipAddAnchors:   true,
+		},
+	}
+
+	testRule := func(rule string, expectMatches, expectNotMatches []string) {
+		testName := rule
+		if testName == "" {
+			testName = "(empty)"
+		}
+		t.Run(testName, func(t *testing.T) {
+			gc := generateConstraints(testRand, 1)
+			container := selectContainerFromContainerList(gc.containers, testRand)
+			container.EnvRules = append(container.EnvRules, EnvRuleConfig{
+				Strategy: EnvVarRuleRegex,
+				Rule:     rule,
+			})
+			gc.allowEnvironmentVariableDropping = false
+
+			for _, env := range expectMatches {
+				tc, err := setupRegoCreateContainerTest(gc, container, false)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+
+				tc.envList = append(tc.envList, env)
+				envsToKeep, _, _, err := tc.policy.EnforceCreateContainerPolicy(gc.ctx, tc.sandboxID, tc.containerID, tc.argList, tc.envList, tc.workingDir, tc.mounts, false, tc.noNewPrivileges, tc.user, tc.groups, tc.umask, tc.capabilities, tc.seccomp)
+
+				// getting an error means something is broken
+				if err != nil {
+					t.Errorf("Expected container creation to be allowed for env %s. It wasn't: %v", env, err)
+					return
+				}
+
+				if !areStringArraysEqual(envsToKeep, tc.envList) {
+					t.Errorf("Expected env %s to be kept, but it was not in the returned envs: %v", env, envsToKeep)
+					return
+				}
+			}
+
+			for _, env := range expectNotMatches {
+				tc, err := setupRegoCreateContainerTest(gc, container, false)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+
+				tc.envList = append(tc.envList, env)
+				_, _, _, err = tc.policy.EnforceCreateContainerPolicy(gc.ctx, tc.sandboxID, tc.containerID, tc.argList, tc.envList, tc.workingDir, tc.mounts, false, tc.noNewPrivileges, tc.user, tc.groups, tc.umask, tc.capabilities, tc.seccomp)
+
+				// not getting an error means something is broken
+				if err == nil {
+					t.Errorf("Expected container creation not to be allowed for env %s. It was allowed: %v", env, err)
+					return
+				}
+
+				envName := strings.Split(env, "=")[0]
+				assertDecisionJSONContains(t, err, "invalid env list", envName)
+			}
+		})
+	}
+
+	for _, testCase := range testCases {
+		if !testCase.skipAddAnchors {
+			for _, rule := range []string{
+				testCase.rule,
+				"^" + testCase.rule,
+				testCase.rule + "$",
+				"^" + testCase.rule + "$",
+			} {
+				testRule(rule, testCase.expectMatches, testCase.expectNotMatches)
+			}
+		} else {
+			testRule(testCase.rule, testCase.expectMatches, testCase.expectNotMatches)
+		}
+	}
+}
+
 func Test_Rego_EnforceEnvironmentVariablePolicy_DropEnvs(t *testing.T) {
 	testFunc := func(gc *generatedConstraints) bool {
 		gc.allowEnvironmentVariableDropping = true
