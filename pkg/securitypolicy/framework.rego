@@ -19,11 +19,6 @@ anchor_pattern(p) := p {
     startswith(p, "^")
 } else := concat("", ["^", p, "$"])
 
-regex_fullmatch(pattern, value) {
-    anchored := anchor_pattern(pattern)
-    regex.match(anchored, value)
-}
-
 device_mounted(target) {
     data.metadata.devices[target]
 }
@@ -51,7 +46,7 @@ deviceHash_ok {
 default mount_device := {"allowed": false}
 
 mount_target_ok {
-    regex_fullmatch(input.mountPathRegex, input.target)
+    regex.match(anchor_pattern(input.mountPathRegex), input.target)
 }
 
 mount_device := {"metadata": [addDevice], "allowed": true} {
@@ -243,7 +238,7 @@ env_ok(pattern, "string", value) {
 }
 
 env_ok(pattern, "re2", value) {
-    regex_fullmatch(pattern, value)
+    regex.match(anchor_pattern(pattern), value)
 }
 
 rule_ok(rule, env) {
@@ -365,7 +360,7 @@ idName_ok(pattern, "name", value) {
 }
 
 idName_ok(pattern, "re2", value) {
-    regex_fullmatch(pattern, value.name)
+    regex.match(anchor_pattern(pattern), value.name)
 }
 
 user_ok(user) {
@@ -731,13 +726,13 @@ security_ok(current_container) {
 mountSource_ok(constraint, source) {
     startswith(constraint, data.sandboxPrefix)
     newConstraint := replace(constraint, data.sandboxPrefix, input.sandboxDir)
-    regex_fullmatch(newConstraint, source)
+    regex.match(anchor_pattern(newConstraint), source)
 }
 
 mountSource_ok(constraint, source) {
     startswith(constraint, data.hugePagesPrefix)
     newConstraint := replace(constraint, data.hugePagesPrefix, input.hugePagesDir)
-    regex_fullmatch(newConstraint, source)
+    regex.match(anchor_pattern(newConstraint), source)
 }
 
 mountSource_ok(constraint, source) {
