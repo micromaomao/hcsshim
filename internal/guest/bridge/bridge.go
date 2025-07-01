@@ -177,6 +177,10 @@ type Bridge struct {
 	Handler Handler
 	// EnableV4 enables the v4+ bridge and the schema v2+ interfaces.
 	EnableV4 bool
+	// Setting ForceSequential to true will force the bridge to only process one
+	// request at a time, except for certain long-running operations (as defined
+	// in asyncMessages).
+	ForceSequential bool
 
 	// responseChan is the response channel used for both request/response
 	// and publish notification workflows.
@@ -189,6 +193,14 @@ type Bridge struct {
 	hasQuitPending atomic.Bool
 
 	protVer prot.ProtocolVersion
+}
+
+// Messages that will be processed asynchronously even in sequential mode.  Note
+// that in sequential mode, these messages will still wait for any in-progress
+// non-async messages to be handled before they are processed, but once they are
+// "acknowledged", the rest will be done asynchronously.
+var alwaysAsyncMessages map[prot.MessageIdentifier]bool = map[prot.MessageIdentifier]bool{
+	prot.ComputeSystemWaitForProcessV1: true,
 }
 
 // AssignHandlers creates and assigns the appropriate bridge
@@ -237,6 +249,10 @@ func (b *Bridge) ListenAndServe(bridgeIn io.ReadCloser, bridgeOut io.WriteCloser
 	defer close(requestChan)
 	defer close(requestErrChan)
 	defer bridgeIn.Close()
+
+	if b.ForceSequential {
+		log.G(context.Background()).Info("bridge: ForceSequential enabled")
+	}
 
 	// Receive bridge requests and schedule them to be processed.
 	go func() {
@@ -340,30 +356,36 @@ func (b *Bridge) ListenAndServe(bridgeIn io.ReadCloser, bridgeOut io.WriteCloser
 	}()
 	// Process each bridge request async and create the response writer.
 	go func() {
+		doOneRequest := func(r *Request) {
+			br := bridgeResponse{
+				ctx: r.Context,
+				header: &prot.MessageHeader{
+					Type: prot.GetResponseIdentifier(r.Header.Type),
+					ID:   r.Header.ID,
+				},
+			}
+			resp, err := b.Handler.ServeMsg(r)
+			if resp == nil {
+				resp = &prot.MessageResponseBase{}
+			}
+			resp.Base().ActivityID = r.ActivityID
+			if err != nil {
+				span := trace.FromContext(r.Context)
+				if span != nil {
+					oc.SetSpanStatus(span, err)
+				}
+				setErrorForResponseBase(resp.Base(), err, "gcs" /* moduleName */)
+			}
+			br.response = resp
+			b.responseChan <- br
+		}
+
 		for req := range requestChan {
-			go func(r *Request) {
-				br := bridgeResponse{
-					ctx: r.Context,
-					header: &prot.MessageHeader{
-						Type: prot.GetResponseIdentifier(r.Header.Type),
-						ID:   r.Header.ID,
-					},
-				}
-				resp, err := b.Handler.ServeMsg(r)
-				if resp == nil {
-					resp = &prot.MessageResponseBase{}
-				}
-				resp.Base().ActivityID = r.ActivityID
-				if err != nil {
-					span := trace.FromContext(r.Context)
-					if span != nil {
-						oc.SetSpanStatus(span, err)
-					}
-					setErrorForResponseBase(resp.Base(), err, "gcs" /* moduleName */)
-				}
-				br.response = resp
-				b.responseChan <- br
-			}(req)
+			if b.ForceSequential && !alwaysAsyncMessages[req.Header.Type] {
+				doOneRequest(req)
+			} else {
+				go doOneRequest(req)
+			}
 		}
 	}()
 	// Process each bridge response sync. This channel is for request/response and publish workflows.
