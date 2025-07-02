@@ -63,6 +63,9 @@ type RegoModule struct {
 
 type regoMetadata map[string]map[string]interface{}
 
+const metadataRootKey = "metadata"
+const metadataOperationsKey = "metadata"
+
 type regoMetadataAction string
 
 const (
@@ -123,8 +126,8 @@ func NewRegoPolicyInterpreter(code string, inputData map[string]interface{}) (*R
 		return nil, fmt.Errorf("unable to copy the input data: %w", err)
 	}
 
-	if _, ok := data["metadata"]; !ok {
-		data["metadata"] = make(regoMetadata)
+	if _, ok := data[metadataRootKey]; !ok {
+		data[metadataRootKey] = make(regoMetadata)
 	}
 
 	policy := &RegoPolicyInterpreter{
@@ -207,7 +210,7 @@ func (r *RegoPolicyInterpreter) GetMetadata(name string, key string) (interface{
 	r.dataAndModulesMutex.Lock()
 	defer r.dataAndModulesMutex.Unlock()
 
-	metadataRoot, ok := r.data["metadata"].(regoMetadata)
+	metadataRoot, ok := r.data[metadataRootKey].(regoMetadata)
 	if !ok {
 		return nil, errors.New("illegal interpreter state: invalid metadata object type")
 	}
@@ -286,7 +289,7 @@ func (r *RegoPolicyInterpreter) UpdateOSType(os string) error {
 func (r *RegoPolicyInterpreter) updateMetadata(ops []*regoMetadataOperation) error {
 	// dataAndModulesMutex must be held before calling this
 
-	metadataRoot, ok := r.data["metadata"].(regoMetadata)
+	metadataRoot, ok := r.data[metadataRootKey].(regoMetadata)
 	if !ok {
 		return errors.New("illegal interpreter state: invalid metadata object type")
 	}
@@ -431,7 +434,7 @@ func (r *RegoPolicyInterpreter) logMetadata() {
 		return
 	}
 
-	contents, err := json.Marshal(r.data["metadata"])
+	contents, err := json.Marshal(r.data[metadataRootKey])
 	if err != nil {
 		r.metadataLogger.Printf("error marshaling metadata: %v\n", err.Error())
 	} else {
@@ -617,7 +620,7 @@ func (r *RegoPolicyInterpreter) Query(rule string, input map[string]interface{})
 	r.logResult(rule, resultSet)
 
 	ops := []*regoMetadataOperation{}
-	if rawMetadata, ok := resultSet["metadata"]; ok {
+	if rawMetadata, ok := resultSet[metadataOperationsKey]; ok {
 		metadata, ok := rawMetadata.([]interface{})
 		if !ok {
 			return nil, errors.New("error loading metadata array: invalid type")
@@ -640,7 +643,7 @@ func (r *RegoPolicyInterpreter) Query(rule string, input map[string]interface{})
 	}
 
 	for name, value := range resultSet {
-		if name == "metadata" {
+		if name == metadataOperationsKey {
 			continue
 		} else {
 			result[name] = value
