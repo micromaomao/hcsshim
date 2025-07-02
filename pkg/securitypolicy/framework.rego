@@ -1313,7 +1313,7 @@ errors["deviceHash not found"] {
 }
 
 errors["device already mounted at path"] {
-    input.rule == "mount_device"
+    input.rule in ["mount_device", "rw_mount_device"]
     device_mounted(input.target)
 }
 
