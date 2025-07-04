@@ -743,35 +743,6 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 			return err
 		}
 		mvd.Controller = cNum
-		// first we try to update the internal state for read-write attachments.
-		if !mvd.ReadOnly {
-			localCtx, cancel := context.WithTimeout(ctx, time.Second*5)
-			defer cancel()
-			source, err := scsi.GetDevicePath(localCtx, mvd.Controller, mvd.Lun, mvd.Partition)
-			if err != nil {
-				return err
-			}
-			switch req.RequestType {
-			case guestrequest.RequestTypeAdd:
-				if err := h.hostMounts.AddRWDevice(mvd.MountPath, source, mvd.Encrypted); err != nil {
-					return err
-				}
-				defer func() {
-					if retErr != nil {
-						_ = h.hostMounts.RemoveRWDevice(mvd.MountPath, source)
-					}
-				}()
-			case guestrequest.RequestTypeRemove:
-				if err := h.hostMounts.RemoveRWDevice(mvd.MountPath, source); err != nil {
-					return err
-				}
-				defer func() {
-					if retErr != nil {
-						_ = h.hostMounts.AddRWDevice(mvd.MountPath, source, mvd.Encrypted)
-					}
-				}()
-			}
-		}
 		return h.modifyMappedVirtualDisk(ctx, req.RequestType, mvd)
 	case guestresource.ResourceTypeMappedDirectory:
 		if err := h.checkMountsNotBroken(); err != nil {
@@ -1190,16 +1161,17 @@ func (h *Host) modifyMappedVirtualDisk(
 ) (err error) {
 	var verityInfo *guestresource.DeviceVerityInfo
 	securityPolicy := h.securityOptions.PolicyEnforcer
+	devPath, err := scsi.GetDevicePath(ctx, mvd.Controller, mvd.Lun, mvd.Partition)
+	if err != nil {
+		return err
+	}
+
 	if mvd.ReadOnly {
 		// The only time the policy is empty, and we want it to be empty
 		// is when no policy is provided, and we default to open door
 		// policy. In any other case, e.g. explicit open door or any
 		// other rego policy we would like to mount layers with verity.
 		if h.HasSecurityPolicy() {
-			devPath, err := scsi.GetDevicePath(ctx, mvd.Controller, mvd.Lun, mvd.Partition)
-			if err != nil {
-				return err
-			}
 			verityInfo, err = verity.ReadVeritySuperBlock(ctx, devPath)
 			if err != nil {
 				return err
@@ -1222,6 +1194,17 @@ func (h *Host) modifyMappedVirtualDisk(
 
 	switch rt {
 	case guestrequest.RequestTypeAdd:
+		if !mvd.ReadOnly {
+			if err = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted); err != nil {
+				return err
+			}
+			defer func() {
+				if err != nil {
+					_ = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath)
+				}
+			}()
+		}
+
 		mountCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 		defer cancel()
 		if mvd.MountPath != "" {
@@ -1258,6 +1241,17 @@ func (h *Host) modifyMappedVirtualDisk(
 		}
 		return nil
 	case guestrequest.RequestTypeRemove:
+		if !mvd.ReadOnly {
+			if err = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath); err != nil {
+				return err
+			}
+			defer func() {
+				if err != nil {
+					_ = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
+				}
+			}()
+		}
+
 		if mvd.MountPath != "" {
 			if mvd.ReadOnly {
 				if err = securityPolicy.EnforceDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
