@@ -719,18 +719,18 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 				}()
 			}
 		}
-		return modifyMappedVirtualDisk(ctx, req.RequestType, mvd, h.securityOptions.PolicyEnforcer)
+		return h.modifyMappedVirtualDisk(ctx, req.RequestType, mvd)
 	case guestresource.ResourceTypeMappedDirectory:
-		return modifyMappedDirectory(ctx, h.vsock, req.RequestType, req.Settings.(*guestresource.LCOWMappedDirectory), h.securityOptions.PolicyEnforcer)
+		return h.modifyMappedDirectory(ctx, h.vsock, req.RequestType, req.Settings.(*guestresource.LCOWMappedDirectory))
 	case guestresource.ResourceTypeVPMemDevice:
-		return modifyMappedVPMemDevice(ctx, req.RequestType, req.Settings.(*guestresource.LCOWMappedVPMemDevice), h.securityOptions.PolicyEnforcer)
+		return h.modifyMappedVPMemDevice(ctx, req.RequestType, req.Settings.(*guestresource.LCOWMappedVPMemDevice))
 	case guestresource.ResourceTypeCombinedLayers:
 		cl := req.Settings.(*guestresource.LCOWCombinedLayers)
 		// when cl.ScratchPath == "", we mount overlay as read-only, in which case
 		// we don't really care about scratch encryption, since the host already
 		// knows about the layers and the overlayfs.
 		encryptedScratch := cl.ScratchPath != "" && h.hostMounts.IsEncrypted(cl.ScratchPath)
-		return modifyCombinedLayers(ctx, req.RequestType, req.Settings.(*guestresource.LCOWCombinedLayers), encryptedScratch, h.securityOptions.PolicyEnforcer)
+		return h.modifyCombinedLayers(ctx, req.RequestType, req.Settings.(*guestresource.LCOWCombinedLayers), encryptedScratch)
 	case guestresource.ResourceTypeNetwork:
 		return modifyNetwork(ctx, req.RequestType, req.Settings.(*guestresource.LCOWNetworkAdapter))
 	case guestresource.ResourceTypeVPCIDevice:
@@ -1118,19 +1118,19 @@ func modifySCSIDevice(
 	}
 }
 
-func modifyMappedVirtualDisk(
+func (h *Host) modifyMappedVirtualDisk(
 	ctx context.Context,
 	rt guestrequest.RequestType,
 	mvd *guestresource.LCOWMappedVirtualDisk,
-	securityPolicy securitypolicy.SecurityPolicyEnforcer,
 ) (err error) {
 	var verityInfo *guestresource.DeviceVerityInfo
+	securityPolicy := h.securityOptions.PolicyEnforcer
 	if mvd.ReadOnly {
 		// The only time the policy is empty, and we want it to be empty
 		// is when no policy is provided, and we default to open door
 		// policy. In any other case, e.g. explicit open door or any
 		// other rego policy we would like to mount layers with verity.
-		if len(securityPolicy.EncodedSecurityPolicy()) > 0 {
+		if h.HasSecurityPolicy() {
 			devPath, err := scsi.GetDevicePath(ctx, mvd.Controller, mvd.Lun, mvd.Partition)
 			if err != nil {
 				return err
@@ -1204,13 +1204,14 @@ func modifyMappedVirtualDisk(
 	}
 }
 
-func modifyMappedDirectory(
+func (h *Host) modifyMappedDirectory(
 	ctx context.Context,
 	vsock transport.Transport,
 	rt guestrequest.RequestType,
 	md *guestresource.LCOWMappedDirectory,
-	securityPolicy securitypolicy.SecurityPolicyEnforcer,
 ) (err error) {
+	securityPolicy := h.securityOptions.PolicyEnforcer
+
 	switch rt {
 	case guestrequest.RequestTypeAdd:
 		err = securityPolicy.EnforcePlan9MountPolicy(ctx, md.MountPath)
@@ -1231,14 +1232,14 @@ func modifyMappedDirectory(
 	}
 }
 
-func modifyMappedVPMemDevice(ctx context.Context,
+func (h *Host) modifyMappedVPMemDevice(ctx context.Context,
 	rt guestrequest.RequestType,
 	vpd *guestresource.LCOWMappedVPMemDevice,
-	securityPolicy securitypolicy.SecurityPolicyEnforcer,
 ) (err error) {
 	var verityInfo *guestresource.DeviceVerityInfo
+	securityPolicy := h.securityOptions.PolicyEnforcer
 	var deviceHash string
-	if len(securityPolicy.EncodedSecurityPolicy()) > 0 {
+	if h.HasSecurityPolicy() {
 		if vpd.MappingInfo != nil {
 			return fmt.Errorf("multi mapping is not supported with verity")
 		}
@@ -1276,19 +1277,18 @@ func modifyMappedVPCIDevice(ctx context.Context, rt guestrequest.RequestType, vp
 	}
 }
 
-func modifyCombinedLayers(
+func (h *Host) modifyCombinedLayers(
 	ctx context.Context,
 	rt guestrequest.RequestType,
 	cl *guestresource.LCOWCombinedLayers,
 	scratchEncrypted bool,
-	securityPolicy securitypolicy.SecurityPolicyEnforcer,
 ) (err error) {
-	isConfidential := len(securityPolicy.EncodedSecurityPolicy()) > 0
+	securityPolicy := h.securityOptions.PolicyEnforcer
 	containerID := cl.ContainerID
 
 	switch rt {
 	case guestrequest.RequestTypeAdd:
-		if isConfidential {
+		if h.HasSecurityPolicy() {
 			if err := checkValidContainerID(containerID, "container"); err != nil {
 				return err
 			}
