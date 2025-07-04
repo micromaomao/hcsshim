@@ -1198,17 +1198,6 @@ func (h *Host) modifyMappedVirtualDisk(
 
 	switch rt {
 	case guestrequest.RequestTypeAdd:
-		if !mvd.ReadOnly {
-			if err = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted); err != nil {
-				return err
-			}
-			defer func() {
-				if err != nil {
-					_ = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath)
-				}
-			}()
-		}
-
 		mountCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 		defer cancel()
 		if mvd.MountPath != "" {
@@ -1221,11 +1210,29 @@ func (h *Host) modifyMappedVirtualDisk(
 				if err != nil {
 					return errors.Wrapf(err, "mounting scsi device controller %d lun %d onto %s denied by policy", mvd.Controller, mvd.Lun, mvd.MountPath)
 				}
+				err = h.hostMounts.AddRODevice(mvd.MountPath, devPath)
+				if err != nil {
+					return err
+				}
+				defer func() {
+					if err != nil {
+						_ = h.hostMounts.RemoveRODevice(mvd.MountPath, devPath)
+					}
+				}()
 			} else {
 				err = securityPolicy.EnforceRWDeviceMountPolicy(ctx, mvd.MountPath, mvd.Encrypted, mvd.EnsureFilesystem, mvd.Filesystem)
 				if err != nil {
 					return errors.Wrapf(err, "mounting scsi device controller %d lun %d onto %s denied by policy", mvd.Controller, mvd.Lun, mvd.MountPath)
 				}
+				err = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
+				if err != nil {
+					return err
+				}
+				defer func() {
+					if err != nil {
+						_ = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
+					}
+				}()
 			}
 			config := &scsi.Config{
 				Encrypted:        mvd.Encrypted,
@@ -1245,26 +1252,31 @@ func (h *Host) modifyMappedVirtualDisk(
 		}
 		return nil
 	case guestrequest.RequestTypeRemove:
-		if !mvd.ReadOnly {
-			if err = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath); err != nil {
-				return err
-			}
-			defer func() {
-				if err != nil {
-					_ = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
-				}
-			}()
-		}
-
 		if mvd.MountPath != "" {
 			if mvd.ReadOnly {
 				if err = securityPolicy.EnforceDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
 					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
 				}
+				if err = h.hostMounts.RemoveRODevice(mvd.MountPath, devPath); err != nil {
+					return err
+				}
+				defer func() {
+					if err != nil {
+						_ = h.hostMounts.AddRODevice(mvd.MountPath, devPath)
+					}
+				}()
 			} else {
 				if err = securityPolicy.EnforceRWDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
 					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
 				}
+				if err = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath, mvd.Encrypted); err != nil {
+					return err
+				}
+				defer func() {
+					if err != nil {
+						_ = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
+					}
+				}()
 			}
 			// Check that the directory actually exists first, and if it does
 			// not then we just refuse to do anything, without closing the dm
@@ -1508,9 +1520,17 @@ func (h *Host) modifyCombinedLayers(
 			}
 		}
 
-		if err := securityPolicy.EnforceOverlayMountPolicy(ctx, containerID, layerPaths, cl.ContainerRootPath); err != nil {
+		if err = securityPolicy.EnforceOverlayMountPolicy(ctx, containerID, layerPaths, cl.ContainerRootPath); err != nil {
 			return fmt.Errorf("overlay creation denied by policy: %w", err)
 		}
+		if err = h.hostMounts.AddOverlay(cl.ContainerRootPath, layerPaths, cl.ScratchPath); err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				_, _ = h.hostMounts.RemoveOverlay(cl.ContainerRootPath)
+			}
+		}()
 
 		// Correctness for policy revertable section:
 		// MountLayer does two things - mkdir, then mount. On mount failure, the
@@ -1523,6 +1543,15 @@ func (h *Host) modifyCombinedLayers(
 		if err = securityPolicy.EnforceOverlayUnmountPolicy(ctx, cl.ContainerRootPath); err != nil {
 			return errors.Wrap(err, "overlay removal denied by policy")
 		}
+		var undoRemoveOverlay func()
+		if undoRemoveOverlay, err = h.hostMounts.RemoveOverlay(cl.ContainerRootPath); err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil && undoRemoveOverlay != nil {
+				undoRemoveOverlay()
+			}
+		}()
 
 		// Note: storage.UnmountPath is a no-op if the path does not exist.
 		err = storage.UnmountPath(ctx, cl.ContainerRootPath, true)
