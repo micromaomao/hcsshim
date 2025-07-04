@@ -382,7 +382,7 @@ func (b *Bridge) ListenAndServe(bridgeIn io.ReadCloser, bridgeOut io.WriteCloser
 
 		for req := range requestChan {
 			if b.ForceSequential && !alwaysAsyncMessages[req.Header.Type] {
-				doOneRequest(req)
+				runSequentialRequestHandler(req, doOneRequest)
 			} else {
 				go doOneRequest(req)
 			}
@@ -443,6 +443,32 @@ func (b *Bridge) ListenAndServe(bridgeIn io.ReadCloser, bridgeOut io.WriteCloser
 		<-responseErrChan
 		return err
 	}
+}
+
+// Do handleFn(r), but prints a warning if handleFn does not, or takes too long
+// to return.
+func runSequentialRequestHandler(r *Request, handleFn func(*Request)) {
+	// Note that this is only a context used for triggering the blockage
+	// warning, the request processing still uses r.Context.  We don't want to
+	// cancel the request handling itself when we reach the 5s timeout.
+	timeoutCtx, cancel := context.WithTimeout(r.Context, 5*time.Second)
+	go func() {
+		<-timeoutCtx.Done()
+		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+			log.G(timeoutCtx).WithFields(logrus.Fields{
+				// We want to log those even though we're providing r.Context, since if
+				// the request never finishes the span end log will never get written,
+				// and we may therefore not be able to find out about the following info
+				// otherwise:
+				"message-type": r.Header.Type.String(),
+				"message-id":   r.Header.ID,
+				"activity-id":  r.ActivityID,
+				"container-id": r.ContainerID,
+			}).Warnf("bridge: request processing thread in sequential mode blocked on the current request for more than 5 seconds")
+		}
+	}()
+	defer cancel()
+	handleFn(r)
 }
 
 // PublishNotification writes a specific notification to the bridge.
