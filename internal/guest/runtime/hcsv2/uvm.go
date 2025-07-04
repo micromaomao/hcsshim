@@ -404,6 +404,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		isSandbox:      criType == "sandbox",
 		exitType:       prot.NtUnexpectedExit,
 		processes:      make(map[uint32]*containerProcess),
+		terminated:     atomic.Bool{},
 		scratchDirPath: settings.ScratchDirPath,
 	}
 	c.setStatus(containerCreating)
@@ -726,6 +727,25 @@ func writeSpecToFile(ctx context.Context, configFile string, spec *specs.Spec) e
 	}
 
 	return nil
+}
+
+// Returns whether there is a running container that is currently using the
+// given overlay (as its rootfs).
+func (h *Host) IsOverlayInUse(overlayPath string) bool {
+	h.containersMutex.Lock()
+	defer h.containersMutex.Unlock()
+
+	for _, c := range h.containers {
+		if c.terminated.Load() {
+			continue
+		}
+
+		if c.spec.Root.Path == overlayPath {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *guestrequest.ModificationRequest) (retErr error) {
@@ -1591,6 +1611,12 @@ func (h *Host) modifyCombinedLayers(
 		if err = securityPolicy.EnforceOverlayUnmountPolicy(ctx, cl.ContainerRootPath); err != nil {
 			return errors.Wrap(err, "overlay removal denied by policy")
 		}
+
+		// Check that no running container is using this overlay as its rootfs.
+		if h.HasSecurityPolicy() && h.IsOverlayInUse(cl.ContainerRootPath) {
+			return fmt.Errorf("overlay %q is in use by a running container", cl.ContainerRootPath)
+		}
+
 		if h.hostMounts != nil {
 			var undoRemoveOverlay func()
 			if undoRemoveOverlay, err = h.hostMounts.RemoveOverlay(cl.ContainerRootPath); err != nil {
