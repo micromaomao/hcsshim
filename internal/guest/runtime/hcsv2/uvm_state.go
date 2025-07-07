@@ -312,3 +312,14 @@ func (hm *hostMounts) IsEncrypted(path string) bool {
 	}
 	return dev.encrypted
 }
+
+func (hm *hostMounts) HasOverlayMountedAt(path string) bool {
+	hm.stateMutex.Lock()
+	defer hm.stateMutex.Unlock()
+
+	dev := hm.findDeviceAtPath(filepath.Clean(path))
+	if dev == nil {
+		return false
+	}
+	return dev.ty == DeviceTypeOverlay
+}
