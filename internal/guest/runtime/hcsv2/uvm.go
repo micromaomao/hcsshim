@@ -26,6 +26,7 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"go.opencensus.io/trace"
 	"golang.org/x/sys/unix"
 
 	"github.com/Microsoft/hcsshim/internal/bridgeutils/gcserr"
@@ -44,6 +45,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guestpath"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/logfields"
+	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/internal/oci"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
@@ -1151,12 +1153,26 @@ func (h *Host) modifyMappedVirtualDisk(
 	rt guestrequest.RequestType,
 	mvd *guestresource.LCOWMappedVirtualDisk,
 ) (err error) {
+	ctx, span := oc.StartSpan(ctx, "gcs::Host::modifyMappedVirtualDisk")
+	defer span.End()
+	defer func() { oc.SetSpanStatus(span, err) }()
+	span.AddAttributes(
+		trace.StringAttribute("requestType", string(rt)),
+		trace.BoolAttribute("hasHostMounts", h.hostMounts != nil),
+		trace.Int64Attribute("controller", int64(mvd.Controller)),
+		trace.Int64Attribute("lun", int64(mvd.Lun)),
+		trace.Int64Attribute("partition", int64(mvd.Partition)),
+		trace.BoolAttribute("readOnly", mvd.ReadOnly),
+		trace.StringAttribute("mountPath", mvd.MountPath),
+	)
+
 	var verityInfo *guestresource.DeviceVerityInfo
 	securityPolicy := h.securityOptions.PolicyEnforcer
 	devPath, err := scsi.GetDevicePath(ctx, mvd.Controller, mvd.Lun, mvd.Partition)
 	if err != nil {
 		return err
 	}
+	span.AddAttributes(trace.StringAttribute("devicePath", devPath))
 
 	if mvd.ReadOnly {
 		// The only time the policy is empty, and we want it to be empty
@@ -1449,6 +1465,16 @@ func (h *Host) modifyCombinedLayers(
 	rt guestrequest.RequestType,
 	cl *guestresource.LCOWCombinedLayers,
 ) (err error) {
+	ctx, span := oc.StartSpan(ctx, "gcs::Host::modifyCombinedLayers")
+	defer span.End()
+	defer func() { oc.SetSpanStatus(span, err) }()
+	span.AddAttributes(
+		trace.StringAttribute("requestType", string(rt)),
+		trace.BoolAttribute("hasHostMounts", h.hostMounts != nil),
+		trace.StringAttribute("containerRootPath", cl.ContainerRootPath),
+		trace.StringAttribute("scratchPath", cl.ScratchPath),
+	)
+
 	securityPolicy := h.securityOptions.PolicyEnforcer
 	containerID := cl.ContainerID
 
