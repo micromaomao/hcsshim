@@ -112,7 +112,9 @@ type Host struct {
 	securityOptions *securitypolicy.SecurityOptions
 
 	// hostMounts keeps the state of currently mounted devices and file systems,
-	// which is used for GCS hardening.
+	// which is used for GCS hardening.  It is only used for confidential
+	// containers, and is initialized in SetConfidentialUVMOptions.  If this is
+	// nil, we do not do add any special restrictions on mounts / unmounts.
 	hostMounts *hostMounts
 	// A permanent flag to indicate that further mounts, unmounts and container
 	// creation should not be allowed.  This is set when, because of a failure
@@ -141,7 +143,7 @@ func NewHost(rtime runtime.Runtime, vsock transport.Transport, initialEnforcer s
 		rtime:                 rtime,
 		vsock:                 vsock,
 		devNullTransport:      &transport.DevNullTransport{},
-		hostMounts:            newHostMounts(),
+		hostMounts:            nil,
 		securityOptions:       securityPolicyOptions,
 		mountsBroken:          atomic.Bool{},
 	}
@@ -765,12 +767,7 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 			return err
 		}
 
-		cl := req.Settings.(*guestresource.LCOWCombinedLayers)
-		// when cl.ScratchPath == "", we mount overlay as read-only, in which case
-		// we don't really care about scratch encryption, since the host already
-		// knows about the layers and the overlayfs.
-		encryptedScratch := cl.ScratchPath != "" && h.hostMounts.IsEncrypted(cl.ScratchPath)
-		return h.modifyCombinedLayers(ctx, req.RequestType, req.Settings.(*guestresource.LCOWCombinedLayers), encryptedScratch)
+		return h.modifyCombinedLayers(ctx, req.RequestType, req.Settings.(*guestresource.LCOWCombinedLayers))
 	case guestresource.ResourceTypeNetwork:
 		return modifyNetwork(ctx, req.RequestType, req.Settings.(*guestresource.LCOWNetworkAdapter))
 	case guestresource.ResourceTypeVPCIDevice:
@@ -786,10 +783,22 @@ func (h *Host) modifyHostSettings(ctx context.Context, containerID string, req *
 		if !ok {
 			return errors.New("the request's settings are not of type ConfidentialOptions")
 		}
-		return h.securityOptions.SetConfidentialOptions(ctx,
+		err := h.securityOptions.SetConfidentialOptions(ctx,
 			r.EnforcerType,
 			r.EncodedSecurityPolicy,
 			r.EncodedUVMReference)
+		if err != nil {
+			return err
+		}
+
+		// Start tracking mounts and restricting unmounts on confidential containers.
+		// As long as we started off with the ClosedDoorSecurityPolicyEnforcer, no
+		// mounts should have been allowed until this point.
+		if h.HasSecurityPolicy() {
+			log.G(ctx).Debug("hostMounts initialized")
+			h.hostMounts = newHostMounts()
+		}
+		return nil
 	case guestresource.ResourceTypePolicyFragment:
 		r, ok := req.Settings.(*guestresource.SecurityPolicyFragment)
 		if !ok {
@@ -1210,29 +1219,33 @@ func (h *Host) modifyMappedVirtualDisk(
 				if err != nil {
 					return errors.Wrapf(err, "mounting scsi device controller %d lun %d onto %s denied by policy", mvd.Controller, mvd.Lun, mvd.MountPath)
 				}
-				err = h.hostMounts.AddRODevice(mvd.MountPath, devPath)
-				if err != nil {
-					return err
-				}
-				defer func() {
+				if h.hostMounts != nil {
+					err = h.hostMounts.AddRODevice(mvd.MountPath, devPath)
 					if err != nil {
-						_ = h.hostMounts.RemoveRODevice(mvd.MountPath, devPath)
+						return err
 					}
-				}()
+					defer func() {
+						if err != nil {
+							_ = h.hostMounts.RemoveRODevice(mvd.MountPath, devPath)
+						}
+					}()
+				}
 			} else {
 				err = securityPolicy.EnforceRWDeviceMountPolicy(ctx, mvd.MountPath, mvd.Encrypted, mvd.EnsureFilesystem, mvd.Filesystem)
 				if err != nil {
 					return errors.Wrapf(err, "mounting scsi device controller %d lun %d onto %s denied by policy", mvd.Controller, mvd.Lun, mvd.MountPath)
 				}
-				err = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
-				if err != nil {
-					return err
-				}
-				defer func() {
+				if h.hostMounts != nil {
+					err = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
 					if err != nil {
-						_ = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
+						return err
 					}
-				}()
+					defer func() {
+						if err != nil {
+							_ = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
+						}
+					}()
+				}
 			}
 			config := &scsi.Config{
 				Encrypted:        mvd.Encrypted,
@@ -1257,26 +1270,30 @@ func (h *Host) modifyMappedVirtualDisk(
 				if err = securityPolicy.EnforceDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
 					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
 				}
-				if err = h.hostMounts.RemoveRODevice(mvd.MountPath, devPath); err != nil {
-					return err
-				}
-				defer func() {
-					if err != nil {
-						_ = h.hostMounts.AddRODevice(mvd.MountPath, devPath)
+				if h.hostMounts != nil {
+					if err = h.hostMounts.RemoveRODevice(mvd.MountPath, devPath); err != nil {
+						return err
 					}
-				}()
+					defer func() {
+						if err != nil {
+							_ = h.hostMounts.AddRODevice(mvd.MountPath, devPath)
+						}
+					}()
+				}
 			} else {
 				if err = securityPolicy.EnforceRWDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
 					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
 				}
-				if err = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath, mvd.Encrypted); err != nil {
-					return err
-				}
-				defer func() {
-					if err != nil {
-						_ = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
+				if h.hostMounts != nil {
+					if err = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath, mvd.Encrypted); err != nil {
+						return err
 					}
-				}()
+					defer func() {
+						if err != nil {
+							_ = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
+						}
+					}()
+				}
 			}
 			// Check that the directory actually exists first, and if it does
 			// not then we just refuse to do anything, without closing the dm
@@ -1452,7 +1469,6 @@ func (h *Host) modifyCombinedLayers(
 	ctx context.Context,
 	rt guestrequest.RequestType,
 	cl *guestresource.LCOWCombinedLayers,
-	scratchEncrypted bool,
 ) (err error) {
 	securityPolicy := h.securityOptions.PolicyEnforcer
 	containerID := cl.ContainerID
@@ -1514,6 +1530,10 @@ func (h *Host) modifyCombinedLayers(
 		} else {
 			upperdirPath = filepath.Join(cl.ScratchPath, "upper")
 			workdirPath = filepath.Join(cl.ScratchPath, "work")
+			scratchEncrypted := false
+			if h.hostMounts != nil {
+				scratchEncrypted = h.hostMounts.IsEncrypted(cl.ScratchPath)
+			}
 
 			if err := securityPolicy.EnforceScratchMountPolicy(ctx, cl.ScratchPath, scratchEncrypted); err != nil {
 				return fmt.Errorf("scratch mounting denied by policy: %w", err)
@@ -1523,14 +1543,16 @@ func (h *Host) modifyCombinedLayers(
 		if err = securityPolicy.EnforceOverlayMountPolicy(ctx, containerID, layerPaths, cl.ContainerRootPath); err != nil {
 			return fmt.Errorf("overlay creation denied by policy: %w", err)
 		}
-		if err = h.hostMounts.AddOverlay(cl.ContainerRootPath, layerPaths, cl.ScratchPath); err != nil {
-			return err
-		}
-		defer func() {
-			if err != nil {
-				_, _ = h.hostMounts.RemoveOverlay(cl.ContainerRootPath)
+		if h.hostMounts != nil {
+			if err = h.hostMounts.AddOverlay(cl.ContainerRootPath, layerPaths, cl.ScratchPath); err != nil {
+				return err
 			}
-		}()
+			defer func() {
+				if err != nil {
+					_, _ = h.hostMounts.RemoveOverlay(cl.ContainerRootPath)
+				}
+			}()
+		}
 
 		// Correctness for policy revertable section:
 		// MountLayer does two things - mkdir, then mount. On mount failure, the
@@ -1543,15 +1565,17 @@ func (h *Host) modifyCombinedLayers(
 		if err = securityPolicy.EnforceOverlayUnmountPolicy(ctx, cl.ContainerRootPath); err != nil {
 			return errors.Wrap(err, "overlay removal denied by policy")
 		}
-		var undoRemoveOverlay func()
-		if undoRemoveOverlay, err = h.hostMounts.RemoveOverlay(cl.ContainerRootPath); err != nil {
-			return err
-		}
-		defer func() {
-			if err != nil && undoRemoveOverlay != nil {
-				undoRemoveOverlay()
+		if h.hostMounts != nil {
+			var undoRemoveOverlay func()
+			if undoRemoveOverlay, err = h.hostMounts.RemoveOverlay(cl.ContainerRootPath); err != nil {
+				return err
 			}
-		}()
+			defer func() {
+				if err != nil && undoRemoveOverlay != nil {
+					undoRemoveOverlay()
+				}
+			}()
+		}
 
 		// Note: storage.UnmountPath is a no-op if the path does not exist.
 		err = storage.UnmountPath(ctx, cl.ContainerRootPath, true)
