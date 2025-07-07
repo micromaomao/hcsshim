@@ -1943,3 +1943,38 @@ func (h *Host) commitOrRollbackPolicyRevSection(
 		rev.Commit()
 	}
 }
+
+func (h *Host) DeleteContainerState(ctx context.Context, containerID string) error {
+	if h.HasSecurityPolicy() {
+		if err := checkValidContainerID(containerID, "container"); err != nil {
+			return err
+		}
+	}
+
+	if err := h.checkMountsNotBroken(); err != nil {
+		return err
+	}
+
+	c, err := h.GetCreatedContainer(containerID)
+	if err != nil {
+		return err
+	}
+	if h.HasSecurityPolicy() {
+		if !c.terminated.Load() {
+			return errors.Errorf("Denied deleting state of a running container %q", containerID)
+		}
+		overlay := c.spec.Root.Path
+		if h.hostMounts.HasOverlayMountedAt(overlay) {
+			return errors.Errorf("Denied deleting state of a container with a overlay mount still active")
+		}
+	}
+
+	// remove container state regardless of delete's success
+	defer h.RemoveContainer(containerID)
+
+	if err = c.Delete(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
