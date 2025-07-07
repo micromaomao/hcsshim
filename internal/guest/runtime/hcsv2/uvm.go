@@ -1127,11 +1127,18 @@ func (h *Host) modifyMappedVirtualDisk(
 			}
 		}
 	}
+
 	switch rt {
 	case guestrequest.RequestTypeAdd:
 		mountCtx, cancel := context.WithTimeout(ctx, time.Second*5)
 		defer cancel()
 		if mvd.MountPath != "" {
+			var rev securitypolicy.RevertableSectionHandle
+			rev, err = securityPolicy.StartRevertableSection()
+			if err != nil {
+				return errors.Wrapf(err, "failed to start revertable section on security policy enforcer")
+			}
+			defer h.commitOrRollbackPolicyRevSection(ctx, rev, &err)
 			if mvd.ReadOnly {
 				var deviceHash string
 				if verityInfo != nil {
@@ -1154,6 +1161,12 @@ func (h *Host) modifyMappedVirtualDisk(
 				Filesystem:       mvd.Filesystem,
 				BlockDev:         mvd.BlockDev,
 			}
+			// Since we're rolling back the policy metadata (via the revertable
+			// section) on failure, we need to ensure that we have reverted all
+			// the side effects from this failed mount attempt, otherwise the
+			// Rego metadata is technically still inconsistent with reality.
+			// Mount cleans up the created directory and dm devices on failure,
+			// so we're good.
 			return scsi.Mount(mountCtx, mvd.Controller, mvd.Lun, mvd.Partition, mvd.MountPath,
 				mvd.ReadOnly, mvd.Options, config)
 		}
@@ -1161,11 +1174,11 @@ func (h *Host) modifyMappedVirtualDisk(
 	case guestrequest.RequestTypeRemove:
 		if mvd.MountPath != "" {
 			if mvd.ReadOnly {
-				if err := securityPolicy.EnforceDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
+				if err = securityPolicy.EnforceDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
 					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
 				}
 			} else {
-				if err := securityPolicy.EnforceRWDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
+				if err = securityPolicy.EnforceRWDeviceUnmountPolicy(ctx, mvd.MountPath); err != nil {
 					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
 				}
 			}
@@ -1176,7 +1189,7 @@ func (h *Host) modifyMappedVirtualDisk(
 				Filesystem:       mvd.Filesystem,
 				BlockDev:         mvd.BlockDev,
 			}
-			if err := scsi.Unmount(ctx, mvd.Controller, mvd.Lun, mvd.Partition,
+			if err = scsi.Unmount(ctx, mvd.Controller, mvd.Lun, mvd.Partition,
 				mvd.MountPath, config); err != nil {
 				return err
 			}
@@ -1197,11 +1210,21 @@ func (h *Host) modifyMappedDirectory(
 
 	switch rt {
 	case guestrequest.RequestTypeAdd:
+		var rev securitypolicy.RevertableSectionHandle
+		rev, err = securityPolicy.StartRevertableSection()
+		if err != nil {
+			return errors.Wrapf(err, "failed to start revertable section on security policy enforcer")
+		}
+		defer h.commitOrRollbackPolicyRevSection(ctx, rev, &err)
+
 		err = securityPolicy.EnforcePlan9MountPolicy(ctx, md.MountPath)
 		if err != nil {
 			return errors.Wrapf(err, "mounting plan9 device at %s denied by policy", md.MountPath)
 		}
 
+		// Similar to the reasoning in modifyMappedVirtualDisk, since we're
+		// rolling back the policy metadata, plan9.Mount here must clean up
+		// everything if it fails, which it does do.
 		return plan9.Mount(ctx, vsock, md.MountPath, md.ShareName, uint32(md.Port), md.ReadOnly)
 	case guestrequest.RequestTypeRemove:
 		err = securityPolicy.EnforcePlan9UnmountPolicy(ctx, md.MountPath)
@@ -1232,13 +1255,24 @@ func (h *Host) modifyMappedVPMemDevice(ctx context.Context,
 		}
 		deviceHash = verityInfo.RootDigest
 	}
+
 	switch rt {
 	case guestrequest.RequestTypeAdd:
+		var rev securitypolicy.RevertableSectionHandle
+		rev, err = securityPolicy.StartRevertableSection()
+		if err != nil {
+			return errors.Wrapf(err, "failed to start revertable section on security policy enforcer")
+		}
+		defer h.commitOrRollbackPolicyRevSection(ctx, rev, &err)
+
 		err = securityPolicy.EnforceDeviceMountPolicy(ctx, vpd.MountPath, deviceHash)
 		if err != nil {
 			return errors.Wrapf(err, "mounting pmem device %d onto %s denied by policy", vpd.DeviceNumber, vpd.MountPath)
 		}
 
+		// Similar to the reasoning in modifyMappedVirtualDisk, since we're
+		// rolling back the policy metadata, pmem.Mount here must clean up
+		// everything if it fails, which it does do.
 		return pmem.Mount(ctx, vpd.DeviceNumber, vpd.MountPath, vpd.MappingInfo, verityInfo)
 	case guestrequest.RequestTypeRemove:
 		if err := securityPolicy.EnforceDeviceUnmountPolicy(ctx, vpd.MountPath); err != nil {
@@ -1307,6 +1341,13 @@ func (h *Host) modifyCombinedLayers(
 			layerPaths[i] = layer.Path
 		}
 
+		var rev securitypolicy.RevertableSectionHandle
+		rev, err = securityPolicy.StartRevertableSection()
+		if err != nil {
+			return errors.Wrapf(err, "failed to start revertable section on security policy enforcer")
+		}
+		defer h.commitOrRollbackPolicyRevSection(ctx, rev, &err)
+
 		var upperdirPath string
 		var workdirPath string
 		readonly := false
@@ -1326,6 +1367,10 @@ func (h *Host) modifyCombinedLayers(
 			return fmt.Errorf("overlay creation denied by policy: %w", err)
 		}
 
+		// Correctness for policy revertable section:
+		// MountLayer does two things - mkdir, then mount. On mount failure, the
+		// target directory is cleaned up.  Therefore we're clean in terms of
+		// side effects.
 		return overlay.MountLayer(ctx, layerPaths, upperdirPath, workdirPath, cl.ContainerRootPath, readonly)
 	case guestrequest.RequestTypeRemove:
 		// cl.ContainerID is not set on remove requests, but rego checks that we can
@@ -1623,4 +1668,23 @@ func setupVirtualPodHugePageMountsPath(virtualSandboxID string) error {
 	}
 
 	return storage.MountRShared(mountPath)
+}
+
+// If *err is not nil, the section is rolled back, otherwise it is committed.
+func (h *Host) commitOrRollbackPolicyRevSection(
+	ctx context.Context,
+	rev securitypolicy.RevertableSectionHandle,
+	err *error,
+) {
+	if !h.HasSecurityPolicy() {
+		// Don't produce bogus log entries if we aren't in confidential mode,
+		// even though rev.Rollback would have been no-op.
+		return
+	}
+	if *err != nil {
+		rev.Rollback()
+		logrus.WithContext(ctx).WithError(*err).Warn("rolling back security policy revertable section due to error")
+	} else {
+		rev.Commit()
+	}
 }
