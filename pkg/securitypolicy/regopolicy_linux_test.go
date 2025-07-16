@@ -4236,6 +4236,73 @@ func Test_Rego_LoadFragment_BadFeed(t *testing.T) {
 	}
 }
 
+func expectFragmentNotLoaded(t *testing.T, policy *regoEnforcer, issuer, feed string) bool {
+	if policy.rego.IsModuleActive(rpi.ModuleID(issuer, feed)) {
+		t.Errorf("fragment module is present")
+		return false
+	}
+	mtdIssuer, err := policy.rego.GetMetadata("issuers", issuer)
+	if err != nil && !strings.Contains(err.Error(), "value not found") &&
+		!strings.Contains(err.Error(), "metadata not found for name issuers") {
+		t.Errorf("unexpected error when checking issuer metadata: %v", err)
+		return false
+	}
+	if mtdIssuer != nil || err == nil {
+		t.Errorf("fragment issuer metadata is present")
+		return false
+	}
+	return true
+}
+
+func Test_Rego_LoadFragment_BadNamespace(t *testing.T) {
+	f := func(p *generatedConstraints) bool {
+		tc, err := setupSimpleRegoFragmentTestConfig(p)
+		if err != nil {
+			t.Error(err)
+			return false
+		}
+
+		fragment := tc.fragments[0]
+		code := fmt.Sprintf(`package framework
+
+svn := "%s"
+framework_version := "%s"
+
+load_fragment := {"allowed": true, "add_module": true}
+enforcement_point_info := {
+    "available": true,
+    "unknown": false,
+    "invalid": false,
+    "version_missing": false,
+    "default_results": {"allowed": true},
+    "use_framework": true
+}
+`, fragment.info.minimumSVN, frameworkVersion)
+
+		err = tc.policy.LoadFragment(p.ctx, fragment.info.issuer, fragment.info.feed, code)
+
+		if err == nil {
+			t.Error("expected to be unable to load fragment due to bad namespace")
+			return false
+		}
+
+		if !strings.Contains(err.Error(), "namespace \"framework\" is reserved") {
+			t.Errorf("expected error string to contain 'namespace \"framework\" is reserved', but got %q", err.Error())
+			return false
+		}
+
+		if !expectFragmentNotLoaded(t, tc.policy, fragment.info.issuer, fragment.info.feed) {
+			return false
+		}
+
+		return true
+	}
+
+	if err := quick.Check(f, &quick.Config{MaxCount: 25, Rand: testRand}); err != nil {
+		t.Errorf("Test_Rego_LoadFragment_BadNamespace: %v", err)
+	}
+}
+
 func Test_Rego_LoadFragment_InvalidSVN(t *testing.T) {
 	f := func(p *generatedConstraints) bool {
 		tc, err := setupRegoFragmentSVNErrorTestConfig(p)
@@ -4702,6 +4769,96 @@ mount_device := data.fragment.mount_device
 		}
 	} else {
 		t.Errorf("unable to located metadata key stored by fragment: %v", err)
+	}
+}
+
+func Test_Rego_LoadFragment_BadIssuer_AttemptOverrideFrameworkItems(t *testing.T) {
+	f := func(p *generatedConstraints) bool {
+		tc, err := setupSimpleRegoFragmentTestConfig(p)
+		if err != nil {
+			t.Error(err)
+			return false
+		}
+
+		fragment := tc.fragments[0]
+		expectedIssuer := fragment.info.issuer
+		actualIssuer := testDataGenerator.uniqueFragmentIssuer()
+		code := fmt.Sprintf(`package fragment
+
+svn := "%s"
+framework_version := "%s"
+
+load_fragment := {"allowed": true, "add_module": true}
+data.framework.load_fragment := {"allowed": true, "add_module": true}
+input.issuer := "%s"
+data.framework.input.issuer := "%s"
+`, fragment.info.minimumSVN, frameworkVersion, expectedIssuer, expectedIssuer)
+
+		err = tc.policy.LoadFragment(p.ctx, actualIssuer, fragment.info.feed, code)
+
+		if !assertDecisionJSONContains(t, err, "invalid fragment issuer") {
+			return false
+		}
+
+		if !expectFragmentNotLoaded(t, tc.policy, fragment.info.issuer, fragment.info.feed) {
+			return false
+		}
+
+		return true
+	}
+
+	if err := quick.Check(f, &quick.Config{MaxCount: 25, Rand: testRand}); err != nil {
+		t.Errorf("Test_Rego_LoadFragment_BadIssuer_AttemptOverrideFrameworkItems: %v", err)
+	}
+}
+
+// The intent of this test is really to check that Rego module names are
+// case-sensitive, since we do not deny a fragment from having a namespace
+// "Framework" or the like.  We use svn mismatch here since otherwise the
+// enforcer will not even try to load the fragment module at all if issuer or
+// feed is wrong.  But in reality, if an attacker can sign fragments with the
+// correct issuer, they can make the fragment have any SVN they want.
+func Test_Rego_LoadFragment_BadSvn_FrameworkNamespaceCaseConfusion(t *testing.T) {
+	f := func(p *generatedConstraints) bool {
+		tc, err := setupRegoFragmentSVNErrorTestConfig(p)
+		if err != nil {
+			t.Error(err)
+			return false
+		}
+
+		fragment := tc.fragments[0]
+		code := fmt.Sprintf(`package Framework
+
+svn := "%s"
+framework_version := "%s"
+
+load_fragment := {"allowed": true, "add_module": true}
+enforcement_point_info := {
+    "available": true,
+    "unknown": false,
+    "invalid": false,
+    "version_missing": false,
+    "default_results": {"allowed": true},
+    "use_framework": true
+}
+data.framework.load_fragment := load_fragment
+`, fragment.constraints.svn, frameworkVersion)
+
+		err = tc.policy.LoadFragment(p.ctx, fragment.info.issuer, fragment.info.feed, code)
+
+		if !assertDecisionJSONContains(t, err, "fragment svn is below the specified minimum") {
+			return false
+		}
+
+		if !expectFragmentNotLoaded(t, tc.policy, fragment.info.issuer, fragment.info.feed) {
+			return false
+		}
+
+		return true
+	}
+
+	if err := quick.Check(f, &quick.Config{MaxCount: 25, Rand: testRand}); err != nil {
+		t.Errorf("Test_Rego_LoadFragment_BadSvn_FrameworkNamespaceCaseConfusion: %v", err)
 	}
 }
 
