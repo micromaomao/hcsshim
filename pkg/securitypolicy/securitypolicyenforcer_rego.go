@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -1044,6 +1045,17 @@ func (policy *regoEnforcer) EnforceRuntimeLoggingPolicy(ctx context.Context) err
 	return err
 }
 
+// These namespaces must not be overridden by a fragment
+var reservedNamespaces []string = []string{
+	// Built-in modules
+	"framework",
+	"api",
+	"policy",
+	// This is not a module, but to prevent confusion since framework uses
+	// data.metadata to access those, we block it as well.
+	"metadata",
+}
+
 func parseNamespace(rego string) (string, error) {
 	lines := strings.Split(rego, "\n")
 	parts := strings.Split(lines[0], " ")
@@ -1051,7 +1063,16 @@ func parseNamespace(rego string) (string, error) {
 		return "", errors.New("package definition required on first line")
 	}
 
-	return strings.TrimSpace(parts[1]), nil
+	namespace := strings.TrimSpace(parts[1])
+
+	if namespace == "" {
+		return "", errors.Errorf("namespace %q is invalid", namespace)
+	}
+	if slices.Contains(reservedNamespaces, namespace) {
+		return "", errors.Errorf("namespace %q is reserved and cannot be used for fragments", namespace)
+	}
+
+	return namespace, nil
 }
 
 func (policy *regoEnforcer) LoadFragment(ctx context.Context, issuer string, feed string, rego string) error {
@@ -1067,6 +1088,10 @@ func (policy *regoEnforcer) LoadFragment(ctx context.Context, issuer string, fee
 		Namespace: namespace,
 	}
 
+	// We need to add the fragment code as a new Rego module in order for the
+	// framework to check it using data[input.namespace].  The namespace check
+	// above ensures that the fragment can't override enforcement points
+	// in the framework.
 	policy.rego.AddModule(fragment.ID(), fragment)
 
 	input := inputData{
