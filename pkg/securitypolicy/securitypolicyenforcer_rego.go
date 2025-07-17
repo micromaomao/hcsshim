@@ -1095,26 +1095,42 @@ func (policy *regoEnforcer) LoadFragment(ctx context.Context, issuer string, fee
 		Namespace: namespace,
 	}
 
-	// We need to add the fragment code as a new Rego module in order for the
-	// framework to check it using data[input.namespace].  The namespace check
-	// above ensures that the fragment can't override enforcement points
-	// in the framework.
-	policy.rego.AddModule(fragment.ID(), fragment)
-
 	input := inputData{
-		"issuer":    issuer,
-		"feed":      feed,
-		"namespace": namespace,
+		"issuer":          issuer,
+		"feed":            feed,
+		"namespace":       namespace,
+		"fragment_loaded": false,
 	}
 
+	// Check that the fragment is signed by the expected issuer before loading
+	// its Rego code.
+	_, err = policy.enforce(ctx, "load_fragment", input)
+	if err != nil {
+		return err
+	}
+
+	// At this point we need to add the fragment code as a new Rego module in
+	// order for the framework (or any user defined policies) to check the SVN,
+	// and potentially other information defined by its Rego code. We've already
+	// checked that the fragment is signed correctly, and the namespace is safe
+	// to load (won't override framework or other built-in modules). Once we
+	// added the module, we must make sure the module is removed if we return
+	// with error (or if add_module returned from Rego is false).
+	policy.rego.AddModule(fragment.ID(), fragment)
+	input["fragment_loaded"] = true
+
 	results, err := policy.enforce(ctx, "load_fragment", input)
+	if err != nil {
+		policy.rego.RemoveModule(fragment.ID())
+		return err
+	}
 
 	addModule, _ := results.Bool("add_module")
 	if !addModule {
 		policy.rego.RemoveModule(fragment.ID())
 	}
 
-	return err
+	return nil
 }
 
 func (policy *regoEnforcer) EnforceScratchMountPolicy(ctx context.Context, scratchPath string, encrypted bool) error {
