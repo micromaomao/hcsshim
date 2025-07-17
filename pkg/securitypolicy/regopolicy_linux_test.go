@@ -4236,6 +4236,64 @@ func Test_Rego_LoadFragment_BadFeed(t *testing.T) {
 	}
 }
 
+func Test_Rego_parseNamespace(t *testing.T) {
+	type testCase struct {
+		inputs     []string
+		expected   string
+		expectFail bool
+	}
+	testCases := []testCase{
+		{
+			inputs: []string{
+				"package a\nanything-else",
+				"package  a  \n\n",
+				"package a ",
+			},
+			expected: "a",
+		},
+		{
+			inputs: []string{
+				"package aaa",
+				"package  aaa ",
+				"package  aaa\n# anything",
+			},
+			expected: "aaa",
+		},
+		{
+			inputs: []string{
+				"package",
+				"package\n",
+				"package ",
+				"package  ",
+				"package$",
+				"package aa#bb\nframework",
+				"package\naa\n",
+			},
+			expectFail: true,
+		},
+		{
+			inputs: []string{
+				"package framework",
+				"package  api",
+			},
+			expectFail: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		for _, input := range tc.inputs {
+			result, err := parseNamespace(input)
+			if tc.expectFail && err == nil {
+				t.Errorf("Expected failure for input %q, but got success", input)
+			} else if !tc.expectFail && err != nil {
+				t.Errorf("Unexpected error for input %q: %v", input, err)
+			} else if !tc.expectFail && result != tc.expected {
+				t.Errorf("Expected to parse namespace %q for input %q, but got %q", tc.expected, input, result)
+			}
+		}
+	}
+}
+
 func expectFragmentNotLoaded(t *testing.T, policy *regoEnforcer, issuer, feed string) bool {
 	if policy.rego.IsModuleActive(rpi.ModuleID(issuer, feed)) {
 		t.Errorf("fragment module is present")
@@ -4288,6 +4346,48 @@ enforcement_point_info := {
 
 		if !strings.Contains(err.Error(), "namespace \"framework\" is reserved") {
 			t.Errorf("expected error string to contain 'namespace \"framework\" is reserved', but got %q", err.Error())
+			return false
+		}
+
+		if !expectFragmentNotLoaded(t, tc.policy, fragment.info.issuer, fragment.info.feed) {
+			return false
+		}
+
+		return true
+	}
+
+	if err := quick.Check(f, &quick.Config{MaxCount: 25, Rand: testRand}); err != nil {
+		t.Errorf("Test_Rego_LoadFragment_BadNamespace: %v", err)
+	}
+}
+
+func Test_Rego_LoadFragment_BadNamespace2(t *testing.T) {
+	f := func(p *generatedConstraints) bool {
+		tc, err := setupSimpleRegoFragmentTestConfig(p)
+		if err != nil {
+			t.Error(err)
+			return false
+		}
+
+		fragment := tc.fragments[0]
+		code := fmt.Sprintf(`package #aa
+framework
+
+svn := "%s"
+framework_version := "%s"
+
+load_fragment := {"allowed": true, "add_module": true}
+`, fragment.info.minimumSVN, frameworkVersion)
+
+		err = tc.policy.LoadFragment(p.ctx, fragment.info.issuer, fragment.info.feed, code)
+
+		if err == nil {
+			t.Error("expected to be unable to load fragment due to invalid namespace")
+			return false
+		}
+
+		if !strings.Contains(err.Error(), "valid package definition required on first line") {
+			t.Errorf("expected error string to contain 'valid package definition required on first line', but got %q", err.Error())
 			return false
 		}
 
