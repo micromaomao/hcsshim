@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -1041,6 +1042,20 @@ func (policy *regoEnforcer) EnforceRuntimeLoggingPolicy(ctx context.Context) err
 	return err
 }
 
+// Rego identifier is a letter or underscore, followed by any number of letters,
+// underscores, or digits.  See open-policy-agent/opa
+// ast/internal/scanner/scanner.go :: scanIdentifier, isLetter
+// Technically it also allows other unicode digit characters (but not letters)
+// but we do not allow those, for simplicity.
+var validNamespaceRegex = `[a-zA-Z_][a-zA-Z0-9_]*`
+
+// First line of the fragment Rego source code must be a package definition
+// without any potential for confusion attacks.  We thus limit it to exactly
+// "package" followed by one or more spaces, then a valid Rego identifier, then
+// optionally more spaces.  We do not check if the namespace is a Rego keyword
+// (e.g. "in", "every" etc) but it would fail Rego compilation anyway.
+var validFirstLine = regexp.MustCompile(`^package +(` + validNamespaceRegex + `)\s*$`)
+
 // These namespaces must not be overridden by a fragment
 var reservedNamespaces []string = []string{
 	// Built-in modules
@@ -1054,20 +1069,17 @@ var reservedNamespaces []string = []string{
 
 func parseNamespace(rego string) (string, error) {
 	lines := strings.Split(rego, "\n")
-	parts := strings.Split(lines[0], " ")
-	if parts[0] != "package" {
-		return "", errors.New("package definition required on first line")
+	if lines[0] == "" {
+		return "", errors.New("Fragment Rego is empty")
 	}
-
-	namespace := strings.TrimSpace(parts[1])
-
-	if namespace == "" {
-		return "", errors.Errorf("namespace %q is invalid", namespace)
+	match := validFirstLine.FindStringSubmatch(lines[0])
+	if match == nil {
+		return "", errors.Errorf("valid package definition required on first line, got %q", lines[0])
 	}
+	namespace := match[1]
 	if slices.Contains(reservedNamespaces, namespace) {
 		return "", errors.Errorf("namespace %q is reserved and cannot be used for fragments", namespace)
 	}
-
 	return namespace, nil
 }
 
