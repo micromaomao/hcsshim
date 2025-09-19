@@ -4537,6 +4537,7 @@ enforcement_point_info := {
     "default_results": {"allowed": true},
     "use_framework": true
 }
+default extract_parameter(_, _, _) := ""
 `, fragment.info.minimumSVN, frameworkVersion)
 
 		err = tc.policy.LoadFragment(p.ctx, fragment.info.issuer, fragment.info.feed, code)
@@ -5100,6 +5101,8 @@ load_fragment := {"allowed": true, "add_module": true}
 data.framework.load_fragment := {"allowed": true, "add_module": true}
 input.issuer := "%s"
 data.framework.input.issuer := "%s"
+default extract_parameter(_, _, _) := ""
+data.framework.extract_parameter(a, b, c) := extract_parameter(a, b, c)
 `, fragment.info.minimumSVN, frameworkVersion, expectedIssuer, expectedIssuer)
 
 		err = tc.policy.LoadFragment(p.ctx, actualIssuer, fragment.info.feed, code)
@@ -5150,6 +5153,8 @@ enforcement_point_info := {
     "use_framework": true
 }
 data.framework.load_fragment := load_fragment
+default extract_parameter(_, _, _) := ""
+data.framework.extract_parameter(a, b, c) := extract_parameter(a, b, c)
 `, fragment.constraints.svn, frameworkVersion)
 
 		err = tc.policy.LoadFragment(p.ctx, fragment.info.issuer, fragment.info.feed, code)
@@ -6959,6 +6964,15 @@ func Test_Rego_Fragment_FrameworkSVN(t *testing.T) {
 	fragmentConstraints := generateConstraints(testRand, 1)
 	fragmentConstraints.svn = mustIncrementSVN(gc.fragments[0].minimumSVN)
 	code := fragmentConstraints.toFragment().marshalRego()
+
+	// Simulate what the actual fragment loading code does.  We need to add this
+	// definition even if there are no arguments and the main fragment code does
+	// not use the parameter functions, otherwise it will fail Rego compilation
+	// with unsafe variable error.
+	code, err = getRegoWithParameterDefinitions(code, make(map[string]interface{}))
+	if err != nil {
+		t.Fatalf("Error adding parameter definitions to fragment rego: %v", err)
+	}
 
 	policy.rego.AddModule(fragmentConstraints.namespace, &rpi.RegoModule{
 		Namespace: fragmentConstraints.namespace,
