@@ -1410,6 +1410,12 @@ func (h *Host) modifyMappedDirectory(
 			return errors.Wrapf(err, "mounting plan9 device at %s denied by policy", md.MountPath)
 		}
 
+		if h.HasSecurityPolicy() {
+			if err = plan9.ValidateShareName(md.ShareName); err != nil {
+				return err
+			}
+		}
+
 		// Similar to the reasoning in modifyMappedVirtualDisk, since we're
 		// rolling back the policy metadata, plan9.Mount here must clean up
 		// everything if it fails, which it does do.
