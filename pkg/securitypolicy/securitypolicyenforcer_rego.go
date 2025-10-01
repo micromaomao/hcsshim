@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/Microsoft/hcsshim/internal/gcs"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/log"
@@ -1236,14 +1237,14 @@ func (policy *regoEnforcer) StartRevertableSection() (RevertableSectionHandle, e
 
 func (sh *revertableSectionHandle) Commit() {
 	if sh.policy == nil {
-		panic("revertable section handle already used")
+		gcs.UnrecoverableError(errors.New("revertable section handle already used"))
 	}
 
 	policy := sh.policy
 	sh.policy = nil
 	lockSucc := policy.revertableSectionLock.TryLock()
 	if lockSucc {
-		panic("not in a revertable section")
+		gcs.UnrecoverableError(errors.New("not in a revertable section"))
 	} else {
 		// somebody else (i.e. the caller) has the lock, so we're in a revertable
 		// section.  Clear the saved metadata just in case, then unlock to exit the
@@ -1255,20 +1256,20 @@ func (sh *revertableSectionHandle) Commit() {
 
 func (sh *revertableSectionHandle) Rollback() {
 	if sh.policy == nil {
-		panic("revertable section handle already used")
+		gcs.UnrecoverableError(errors.New("revertable section handle already used"))
 	}
 
 	policy := sh.policy
 	sh.policy = nil
 	lockSucc := policy.revertableSectionLock.TryLock()
 	if lockSucc {
-		panic("not in a revertable section")
+		gcs.UnrecoverableError(errors.New("not in a revertable section"))
 	} else {
 		// somebody else (i.e. the caller) has the lock, so we're in a revertable
 		// section.  Restore the saved metadata, then unlock to exit the section.
 		err := policy.rego.RestoreMetadata(policy.savedMetadata)
 		if err != nil {
-			panic(errors.Wrap(err, "unable to restore metadata for revertable section"))
+			gcs.UnrecoverableError(errors.Wrap(err, "unable to restore metadata for revertable section"))
 		}
 		policy.revertableSectionLock.Unlock()
 	}
