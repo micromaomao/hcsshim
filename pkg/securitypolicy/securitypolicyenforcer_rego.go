@@ -672,6 +672,7 @@ func (policy *regoEnforcer) EnforceCreateContainerPolicy(
 		Umask:                umask,
 		Capabilities:         capabilities,
 		SeccompProfileSHA256: seccompProfileSHA256,
+		LinuxDevices:         []oci.LinuxDevice{},
 	}
 	return policy.EnforceCreateContainerPolicyV2(ctx, containerID, argList, envList, workingDir, mounts, user, opts)
 }
@@ -709,6 +710,7 @@ func (policy *regoEnforcer) EnforceCreateContainerPolicyV2(
 			"sandboxDir":           SandboxMountsDir(opts.SandboxID),
 			"hugePagesDir":         HugePagesMountsDir(opts.SandboxID),
 			"mounts":               appendMountData([]interface{}{}, mounts),
+			"devices":              appendDeviceData([]interface{}{}, opts.LinuxDevices),
 			"privileged":           opts.Privileged,
 			"noNewPrivileges":      opts.NoNewPrivileges,
 			"user":                 user.toInput(),
@@ -791,6 +793,22 @@ func appendMountDataWindows(mountData []interface{}, mounts []oci.Mount) []inter
 	}
 
 	return mountData
+}
+
+func appendDeviceData(deviceData []interface{}, devices []oci.LinuxDevice) []interface{} {
+	for _, device := range devices {
+		deviceData = append(deviceData, inputData{
+			"path":     device.Path,
+			"type":     device.Type,
+			"major":    device.Major,
+			"minor":    device.Minor,
+			"fileMode": device.FileMode,
+			"uid":      device.UID,
+			"gid":      device.GID,
+		})
+	}
+
+	return deviceData
 }
 
 func (policy *regoEnforcer) ExtendDefaultMounts(mounts []oci.Mount) error {
