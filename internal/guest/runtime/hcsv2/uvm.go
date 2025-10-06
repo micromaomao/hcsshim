@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -444,6 +445,18 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		}
 	}
 
+	// Take a backup of the devices array before we populate it with any devices
+	// found by GCS, in order to pass to the policy enforcer later.
+	//
+	// In specGuest.ApplyAnnotationsToSpec, if this is a privileged container,
+	// we will add devices found in the GCS namespace's /dev. Regardless of
+	// privileged or not, we also always include /dev/sev-guest.  Since the
+	// policy already lets the user enforce whether the container should be
+	// privileged or not, and the sev-guest device is always added for a
+	// confidential container, we do not need the policy enforcer to check these
+	// devices we dynamically add again.
+	extraLinuxDevices := slices.Clone(settings.OCISpecification.Linux.Devices)
+
 	// Normally we would be doing policy checking here at the start of our
 	// "policy gated function". However, we can't for create container as we
 	// need a properly correct sandboxID which might be changed by the code
@@ -589,6 +602,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		Umask:                umask,
 		Capabilities:         settings.OCISpecification.Process.Capabilities,
 		SeccompProfileSHA256: seccomp,
+		LinuxDevices:         extraLinuxDevices,
 	}
 	envToKeep, capsToKeep, allowStdio, err := h.securityOptions.PolicyEnforcer.EnforceCreateContainerPolicyV2(
 		ctx,
