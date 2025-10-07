@@ -84,6 +84,11 @@ type regoMetadataOperation struct {
 // The result from a policy query
 type RegoQueryResult map[string]interface{}
 
+// An immutable, saved copy of the metadata state.
+type SavedMetadata struct {
+	metadataRoot regoMetadata
+}
+
 // deep copy for an object
 func copyObject(data map[string]interface{}) (map[string]interface{}, error) {
 	objJSON, err := json.Marshal(data)
@@ -247,6 +252,32 @@ func (r *RegoPolicyInterpreter) GetMetadata(name string, key string) (interface{
 	} else {
 		return nil, fmt.Errorf("metadata not found for name %s", name)
 	}
+}
+
+// Saves a copy of the internal policy metadata state.
+func (r *RegoPolicyInterpreter) SaveMetadata() (s SavedMetadata, err error) {
+	r.dataAndModulesMutex.Lock()
+	defer r.dataAndModulesMutex.Unlock()
+
+	metadataRoot, ok := r.data[metadataRootKey].(regoMetadata)
+	if !ok {
+		return SavedMetadata{}, errors.New("illegal interpreter state: invalid metadata object type")
+	}
+	s.metadataRoot, err = copyRegoMetadata(metadataRoot)
+	return s, err
+}
+
+// Restores a previously saved metadata state.
+func (r *RegoPolicyInterpreter) RestoreMetadata(m SavedMetadata) error {
+	r.dataAndModulesMutex.Lock()
+	defer r.dataAndModulesMutex.Unlock()
+
+	copied, err := copyRegoMetadata(m.metadataRoot)
+	if err != nil {
+		return fmt.Errorf("unable to copy metadata: %w", err)
+	}
+	r.data[metadataRootKey] = copied
+	return nil
 }
 
 func newRegoMetadataOperation(operation interface{}) (*regoMetadataOperation, error) {
