@@ -72,6 +72,37 @@ func Test_copyValue(t *testing.T) {
 	}
 }
 
+func Test_copyRegoMetadata(t *testing.T) {
+	f := func(orig testRegoMetadata) bool {
+		copy, err := copyRegoMetadata(regoMetadata(orig))
+		if err != nil {
+			t.Error(err)
+			return false
+		}
+
+		if len(orig) != len(copy) {
+			t.Errorf("original and copy have different number of objects: %d != %d", len(orig), len(copy))
+			return false
+		}
+
+		for name, origObject := range orig {
+			if copyObject, ok := copy[name]; ok {
+				if !assertObjectsEqual(origObject, copyObject) {
+					t.Errorf("original and copy differ on key %s", name)
+				}
+			} else {
+				t.Errorf("copy missing object %s", name)
+			}
+		}
+
+		return true
+	}
+
+	if err := quick.Check(f, &quick.Config{MaxCount: 30, Rand: testRand}); err != nil {
+		t.Errorf("Test_copyRegoMetadata: %v", err)
+	}
+}
+
 //go:embed test.rego
 var testCode string
 
@@ -508,6 +539,7 @@ type testValue struct {
 }
 type testArray []interface{}
 type testObject map[string]interface{}
+type testRegoMetadata regoMetadata
 
 type testValueType int
 
@@ -578,6 +610,16 @@ func (testValue) Generate(r *rand.Rand, _ int) reflect.Value {
 func (testObject) Generate(r *rand.Rand, _ int) reflect.Value {
 	value := generateObject(r, 0)
 	return reflect.ValueOf(value)
+}
+
+func (testRegoMetadata) Generate(r *rand.Rand, _ int) reflect.Value {
+	numObjects := r.Intn(maxNumberOfFields)
+	metadata := make(testRegoMetadata)
+	for i := 0; i < numObjects; i++ {
+		name := uniqueString(r)
+		metadata[name] = generateObject(r, 0)
+	}
+	return reflect.ValueOf(metadata)
 }
 
 func getResult(r *RegoPolicyInterpreter, p intPair, rule string) (RegoQueryResult, error) {

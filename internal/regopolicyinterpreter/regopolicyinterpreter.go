@@ -116,6 +116,24 @@ func copyValue(value interface{}) (interface{}, error) {
 	return valueCopy, nil
 }
 
+// deep copy for regoMetadata.
+// We cannot use copyObject for this due to the fact that map[string]interface{}
+// is a concrete type and a map of it cannot be used as a map of interface{}.
+func copyRegoMetadata(value regoMetadata) (regoMetadata, error) {
+	valueJSON, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+
+	var valueCopy regoMetadata
+	err = json.Unmarshal(valueJSON, &valueCopy)
+	if err != nil {
+		return nil, err
+	}
+
+	return valueCopy, nil
+}
+
 // NewRegoPolicyInterpreter creates a new RegoPolicyInterpreter, using the code provided.
 // inputData is the Rego data which should be used as the initial state
 // of the interpreter. A deep copy is performed on it such that it will
