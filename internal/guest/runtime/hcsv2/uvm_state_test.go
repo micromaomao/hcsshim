@@ -12,6 +12,9 @@ func Test_Add_Remove_RWDevice(t *testing.T) {
 	mountPath := "/run/gcs/c/abcd"
 	sourcePath := "/dev/sda"
 
+	hm.Lock()
+	defer hm.Unlock()
+
 	if err := hm.AddRWDevice(mountPath, sourcePath, false); err != nil {
 		t.Fatalf("unexpected error adding RW device: %s", err)
 	}
@@ -25,16 +28,24 @@ func Test_Cannot_AddRWDevice_Twice(t *testing.T) {
 	mountPath := "/run/gcs/c/abc"
 	sourcePath := "/dev/sda"
 
+	hm.Lock()
 	if err := hm.AddRWDevice(mountPath, sourcePath, false); err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
+	hm.Unlock()
+
+	hm.Lock()
 	if err := hm.AddRWDevice(mountPath, sourcePath, false); err == nil {
 		t.Fatalf("expected error adding %q for the second time", mountPath)
 	}
+	hm.Unlock()
 }
 
 func Test_Cannot_RemoveRWDevice_Wrong_Source(t *testing.T) {
 	hm := newHostMounts()
+	hm.Lock()
+	defer hm.Unlock()
+
 	mountPath := "/run/gcs/c/abcd"
 	sourcePath := "/dev/sda"
 	wrongSource := "/dev/sdb"
@@ -48,6 +59,9 @@ func Test_Cannot_RemoveRWDevice_Wrong_Source(t *testing.T) {
 
 func Test_Cannot_RemoveRWDevice_Wrong_Encrypted(t *testing.T) {
 	hm := newHostMounts()
+	hm.Lock()
+	defer hm.Unlock()
+
 	mountPath := "/run/gcs/c/abcd"
 	sourcePath := "/dev/sda"
 	if err := hm.AddRWDevice(mountPath, sourcePath, false); err != nil {
@@ -60,6 +74,9 @@ func Test_Cannot_RemoveRWDevice_Wrong_Encrypted(t *testing.T) {
 
 func Test_HostMounts_IsEncrypted(t *testing.T) {
 	hm := newHostMounts()
+	hm.Lock()
+	defer hm.Unlock()
+
 	encryptedPath := "/run/gcs/c/encrypted"
 	encryptedSource := "/dev/sda"
 	if err := hm.AddRWDevice(encryptedPath, encryptedSource, true); err != nil {
@@ -123,6 +140,9 @@ func Test_HostMounts_IsEncrypted(t *testing.T) {
 
 func Test_HostMounts_AddRemoveRODevice(t *testing.T) {
 	hm := newHostMounts()
+	hm.Lock()
+	defer hm.Unlock()
+
 	mountPath := "/run/gcs/c/abcd"
 	sourcePath := "/dev/sda"
 
@@ -137,6 +157,9 @@ func Test_HostMounts_AddRemoveRODevice(t *testing.T) {
 
 func Test_HostMounts_Cannot_AddRODevice_Twice(t *testing.T) {
 	hm := newHostMounts()
+	hm.Lock()
+	defer hm.Unlock()
+
 	mountPath := "/run/gcs/c/abc"
 	sourcePath := "/dev/sda"
 
@@ -150,6 +173,9 @@ func Test_HostMounts_Cannot_AddRODevice_Twice(t *testing.T) {
 
 func Test_HostMounts_AddRemoveOverlay(t *testing.T) {
 	hm := newHostMounts()
+	hm.Lock()
+	defer hm.Unlock()
+
 	mountPath := "/run/gcs/c/aaaa/rootfs"
 	layers := []string{
 		"/run/mounts/scsi/m1",
@@ -183,6 +209,9 @@ func Test_HostMounts_AddRemoveOverlay(t *testing.T) {
 
 func Test_HostMounts_Cannot_RemoveInUseDeviceByOverlay(t *testing.T) {
 	hm := newHostMounts()
+	hm.Lock()
+	defer hm.Unlock()
+
 	mountPath := "/run/gcs/c/aaaa/rootfs"
 	layers := []string{
 		"/run/mounts/scsi/m1",
@@ -228,6 +257,9 @@ func Test_HostMounts_Cannot_RemoveInUseDeviceByOverlay(t *testing.T) {
 
 func Test_HostMounts_Cannot_RemoveInUseDeviceByOverlay_MultipleUsers(t *testing.T) {
 	hm := newHostMounts()
+	hm.Lock()
+	defer hm.Unlock()
+
 	overlay1 := "/run/gcs/c/aaaa/rootfs"
 	overlay2 := "/run/gcs/c/bbbb/rootfs"
 	layers := []string{
