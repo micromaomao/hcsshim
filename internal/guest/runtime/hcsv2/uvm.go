@@ -1256,10 +1256,16 @@ func (h *Host) modifyMappedVirtualDisk(
 					return errors.Wrapf(err, "mounting scsi device controller %d lun %d onto %s denied by policy", mvd.Controller, mvd.Lun, mvd.MountPath)
 				}
 				if h.hostMounts != nil {
+					h.hostMounts.Lock()
+					defer h.hostMounts.Unlock()
+
 					err = h.hostMounts.AddRODevice(mvd.MountPath, devPath)
 					if err != nil {
 						return err
 					}
+					// Note: "When a function returns, its deferred calls are
+					// executed in last-in-first-out order." - so we are safe to
+					// call RemoveRODevice in this defer.
 					defer func() {
 						if err != nil {
 							_ = h.hostMounts.RemoveRODevice(mvd.MountPath, devPath)
@@ -1272,6 +1278,9 @@ func (h *Host) modifyMappedVirtualDisk(
 					return errors.Wrapf(err, "mounting scsi device controller %d lun %d onto %s denied by policy", mvd.Controller, mvd.Lun, mvd.MountPath)
 				}
 				if h.hostMounts != nil {
+					h.hostMounts.Lock()
+					defer h.hostMounts.Unlock()
+
 					err = h.hostMounts.AddRWDevice(mvd.MountPath, devPath, mvd.Encrypted)
 					if err != nil {
 						return err
@@ -1307,6 +1316,9 @@ func (h *Host) modifyMappedVirtualDisk(
 					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
 				}
 				if h.hostMounts != nil {
+					h.hostMounts.Lock()
+					defer h.hostMounts.Unlock()
+
 					if err = h.hostMounts.RemoveRODevice(mvd.MountPath, devPath); err != nil {
 						return err
 					}
@@ -1321,6 +1333,9 @@ func (h *Host) modifyMappedVirtualDisk(
 					return fmt.Errorf("unmounting scsi device at %s denied by policy: %w", mvd.MountPath, err)
 				}
 				if h.hostMounts != nil {
+					h.hostMounts.Lock()
+					defer h.hostMounts.Unlock()
+
 					if err = h.hostMounts.RemoveRWDevice(mvd.MountPath, devPath, mvd.Encrypted); err != nil {
 						return err
 					}
@@ -1528,6 +1543,12 @@ func (h *Host) modifyCombinedLayers(
 		return errors.Wrapf(err, "failed to start revertable section on security policy enforcer")
 	}
 	defer h.commitOrRollbackPolicyRevSection(ctx, rev, &err)
+
+	if h.hostMounts != nil {
+		// We will need this in multiple places, let's take the lock once here.
+		h.hostMounts.Lock()
+		defer h.hostMounts.Unlock()
+	}
 
 	switch rt {
 	case guestrequest.RequestTypeAdd:
@@ -1964,6 +1985,8 @@ func (h *Host) DeleteContainerState(ctx context.Context, containerID string) err
 			return errors.Errorf("Denied deleting state of a running container %q", containerID)
 		}
 		overlay := c.spec.Root.Path
+		h.hostMounts.Lock()
+		defer h.hostMounts.Unlock()
 		if h.hostMounts.HasOverlayMountedAt(overlay) {
 			return errors.Errorf("Denied deleting state of a container with a overlay mount still active")
 		}

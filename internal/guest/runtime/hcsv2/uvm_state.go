@@ -5,11 +5,13 @@ package hcsv2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	"github.com/Microsoft/hcsshim/internal/gcs"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/sirupsen/logrus"
 )
@@ -49,8 +51,18 @@ type device struct {
 	referencedDevices []*device
 }
 
+// hostMounts tracks the state of fs/overlay mounts and their usage
+// relationship. Users of this struct must call hm.Lock() before calling any
+// other methods and call hm.Unlock() when done.
+//
+// Since mount/unmount operations can fail, the expected way to use this struct
+// is to first lock it, call the method to add/remove the device, then, with the
+// lock still held, perform the actual operation.  If the operation fails, the
+// caller must undo the operation by calling the appropriate remove/add method
+// or the returned undo function, before unlocking.
 type hostMounts struct {
-	stateMutex sync.Mutex
+	stateMutex       sync.Mutex
+	stateMutexLocked bool
 
 	// Map from mountPath to device struct
 	devices map[string]*device
@@ -62,16 +74,44 @@ func newHostMounts() *hostMounts {
 	}
 }
 
-// must hold hm.stateMutex
+func (hm *hostMounts) expectLocked() {
+	if !hm.stateMutexLocked {
+		gcs.UnrecoverableError(errors.New("hostMounts: expected stateMutex to be locked, but it was not"))
+	}
+}
+
+// Locks the state mutex. This is not re-entrant, calling it twice in the same
+// thread will deadlock/panic.
+func (hm *hostMounts) Lock() {
+	hm.stateMutex.Lock()
+	// Since we just acquired the lock, either it was not locked before, or
+	// somebody just unlocked it. Either case, hm.stateMutexLocked should be
+	// false.
+	if hm.stateMutexLocked {
+		gcs.UnrecoverableError(errors.New("hostMounts: stateMutexLocked already true when locking stateMutex"))
+	}
+	hm.stateMutexLocked = true
+}
+
+// Unlocks the state mutex
+func (hm *hostMounts) Unlock() {
+	hm.expectLocked()
+	hm.stateMutexLocked = false
+	hm.stateMutex.Unlock()
+}
+
 func (hm *hostMounts) findDeviceAtPath(mountPath string) *device {
+	hm.expectLocked()
+
 	if dev, ok := hm.devices[mountPath]; ok {
 		return dev
 	}
 	return nil
 }
 
-// must hold hm.stateMutex
 func (hm *hostMounts) addDeviceToMapChecked(dev *device) error {
+	hm.expectLocked()
+
 	if _, ok := hm.devices[dev.mountPath]; ok {
 		return fmt.Errorf("device at mount path %q already exists", dev.mountPath)
 	}
@@ -79,8 +119,9 @@ func (hm *hostMounts) addDeviceToMapChecked(dev *device) error {
 	return nil
 }
 
-// must hold hm.stateMutex
 func (hm *hostMounts) findDeviceContainingPath(path string) *device {
+	hm.expectLocked()
+
 	// TODO: can we refactor this function by walking each component of the path
 	// from leaf to root, each time checking if the current component is a mount
 	// point?  (i.e. why do we have to use filepath.Rel?)
@@ -105,8 +146,9 @@ func (hm *hostMounts) findDeviceContainingPath(path string) *device {
 	return foundDev
 }
 
-// must hold hm.stateMutex
 func (hm *hostMounts) usePath(path string) (*device, error) {
+	hm.expectLocked()
+
 	// Find the device at the given path and increment its usage count.
 	dev := hm.findDeviceContainingPath(path)
 	if dev == nil {
@@ -116,8 +158,9 @@ func (hm *hostMounts) usePath(path string) (*device, error) {
 	return dev, nil
 }
 
-// must hold hm.stateMutex
 func (hm *hostMounts) releaseDeviceUsage(dev *device) {
+	hm.expectLocked()
+
 	if dev.usage <= 0 {
 		log.G(context.Background()).WithFields(logrus.Fields{
 			"device":       dev.mountPath,
@@ -130,9 +173,11 @@ func (hm *hostMounts) releaseDeviceUsage(dev *device) {
 	dev.usage--
 }
 
-// must hold hm.stateMutex
-// User should carefully handle side-effects of adding a device if the device fails to be added.
+// User should carefully handle side-effects of adding a device if the device
+// fails to be added.
 func (hm *hostMounts) doAddDevice(mountPath string, ty deviceType, sourcePath string) (*device, error) {
+	hm.expectLocked()
+
 	dev := &device{
 		mountPath:  filepath.Clean(mountPath),
 		ty:         ty,
@@ -146,9 +191,11 @@ func (hm *hostMounts) doAddDevice(mountPath string, ty deviceType, sourcePath st
 	return dev, nil
 }
 
-// must hold hm.stateMutex.  Once checks is called, unless it returns an error,
-// this function will always succeed
+// Once checks is called, unless it returns an error, this function will always
+// succeed
 func (hm *hostMounts) doRemoveDevice(mountPath string, ty deviceType, sourcePath string, checks func(*device) error) error {
+	hm.expectLocked()
+
 	unmountTarget := filepath.Clean(mountPath)
 	device := hm.findDeviceAtPath(unmountTarget)
 	if device == nil {
@@ -181,8 +228,7 @@ func (hm *hostMounts) doRemoveDevice(mountPath string, ty deviceType, sourcePath
 }
 
 func (hm *hostMounts) AddRODevice(mountPath string, sourcePath string) error {
-	hm.stateMutex.Lock()
-	defer hm.stateMutex.Unlock()
+	hm.expectLocked()
 
 	_, err := hm.doAddDevice(mountPath, DeviceTypeRO, sourcePath)
 	return err
@@ -191,8 +237,7 @@ func (hm *hostMounts) AddRODevice(mountPath string, sourcePath string) error {
 // AddRWDevice adds read-write device metadata for device mounted at `mountPath`.
 // Returns an error if there's an existing device mounted at `mountPath` location.
 func (hm *hostMounts) AddRWDevice(mountPath string, sourcePath string, encrypted bool) error {
-	hm.stateMutex.Lock()
-	defer hm.stateMutex.Unlock()
+	hm.expectLocked()
 
 	dev, err := hm.doAddDevice(mountPath, DeviceTypeRW, sourcePath)
 	if err != nil {
@@ -203,8 +248,7 @@ func (hm *hostMounts) AddRWDevice(mountPath string, sourcePath string, encrypted
 }
 
 func (hm *hostMounts) AddOverlay(mountPath string, layers []string, scratchDir string) (err error) {
-	hm.stateMutex.Lock()
-	defer hm.stateMutex.Unlock()
+	hm.expectLocked()
 
 	dev, err := hm.doAddDevice(mountPath, DeviceTypeOverlay, mountPath)
 	if err != nil {
@@ -243,8 +287,7 @@ func (hm *hostMounts) AddOverlay(mountPath string, layers []string, scratchDir s
 }
 
 func (hm *hostMounts) RemoveRODevice(mountPath string, sourcePath string) error {
-	hm.stateMutex.Lock()
-	defer hm.stateMutex.Unlock()
+	hm.expectLocked()
 
 	return hm.doRemoveDevice(mountPath, DeviceTypeRO, sourcePath, nil)
 }
@@ -252,8 +295,7 @@ func (hm *hostMounts) RemoveRODevice(mountPath string, sourcePath string) error 
 // RemoveRWDevice removes the read-write device metadata for device mounted at
 // `mountPath`.
 func (hm *hostMounts) RemoveRWDevice(mountPath string, sourcePath string, encrypted bool) error {
-	hm.stateMutex.Lock()
-	defer hm.stateMutex.Unlock()
+	hm.expectLocked()
 
 	return hm.doRemoveDevice(mountPath, DeviceTypeRW, sourcePath, func(dev *device) error {
 		if dev.encrypted != encrypted {
@@ -264,8 +306,7 @@ func (hm *hostMounts) RemoveRWDevice(mountPath string, sourcePath string, encryp
 }
 
 func (hm *hostMounts) RemoveOverlay(mountPath string) (undo func(), err error) {
-	hm.stateMutex.Lock()
-	defer hm.stateMutex.Unlock()
+	hm.expectLocked()
 
 	var dev *device
 	err = hm.doRemoveDevice(mountPath, DeviceTypeOverlay, mountPath, func(_dev *device) error {
@@ -281,8 +322,7 @@ func (hm *hostMounts) RemoveOverlay(mountPath string) (undo func(), err error) {
 		return nil, err
 	}
 	undo = func() {
-		hm.stateMutex.Lock()
-		defer hm.stateMutex.Unlock()
+		hm.expectLocked()
 
 		for _, refDev := range dev.referencedDevices {
 			refDev.usage++
@@ -303,8 +343,7 @@ func (hm *hostMounts) RemoveOverlay(mountPath string) (undo func(), err error) {
 // IsEncrypted checks if the given path is a sub-path of an encrypted read-write
 // device.
 func (hm *hostMounts) IsEncrypted(path string) bool {
-	hm.stateMutex.Lock()
-	defer hm.stateMutex.Unlock()
+	hm.expectLocked()
 
 	dev := hm.findDeviceContainingPath(path)
 	if dev == nil {
@@ -314,8 +353,7 @@ func (hm *hostMounts) IsEncrypted(path string) bool {
 }
 
 func (hm *hostMounts) HasOverlayMountedAt(path string) bool {
-	hm.stateMutex.Lock()
-	defer hm.stateMutex.Unlock()
+	hm.expectLocked()
 
 	dev := hm.findDeviceAtPath(filepath.Clean(path))
 	if dev == nil {
