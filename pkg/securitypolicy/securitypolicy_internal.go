@@ -240,6 +240,7 @@ type fragment struct {
 	feed       string
 	minimumSVN string
 	includes   []string
+	parameters map[string]interface{}
 }
 
 func (c *Container) toInternal() (*securityPolicyContainer, error) {
