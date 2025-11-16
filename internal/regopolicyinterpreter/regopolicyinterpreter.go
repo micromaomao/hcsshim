@@ -406,6 +406,7 @@ func (r *RegoPolicyInterpreter) UpdateOSType(os string) error {
 	ops := []*regoMetadataOperation{
 		{
 			Action: metadataAdd,
+			Type:   metadataTypeMap,
 			Name:   "operatingsystem",
 			Key:    "ostype",
 			Value:  os,
