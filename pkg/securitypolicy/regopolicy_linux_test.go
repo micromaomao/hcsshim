@@ -8201,7 +8201,7 @@ func Test_Rego_PlatformRules_InFragment2(t *testing.T) {
 		// Mount the container image
 		containerID := testDataGenerator.uniqueContainerID()
 		sandboxID := testDataGenerator.uniqueSandboxID()
-		
+
 		scratchDisk := getScratchDiskMountTarget(sandboxID)
 		err = policy.EnforceRWDeviceMountPolicy(gc.ctx, scratchDisk, true, true, "xfs")
 		if err != nil {
@@ -8233,7 +8233,7 @@ func Test_Rego_PlatformRules_InFragment2(t *testing.T) {
 				Options:     []string{"rbind", "rshared", "ro"},
 			},
 		}
-		
+
 		user := IDName{ID: "0", Name: ""}
 		groups := []IDName{{ID: "0", Name: ""}}
 		capabilities := &oci.LinuxCapabilities{
@@ -8401,7 +8401,7 @@ func Test_Rego_PlatformRules_InPolicy2(t *testing.T) {
 	// Mount the container image
 	containerID := testDataGenerator.uniqueContainerID()
 	sandboxID := testDataGenerator.uniqueSandboxID()
-	
+
 	scratchDisk := getScratchDiskMountTarget(sandboxID)
 	err = policy.EnforceRWDeviceMountPolicy(gc.ctx, scratchDisk, true, true, "xfs")
 	if err != nil {
@@ -8430,7 +8430,7 @@ func Test_Rego_PlatformRules_InPolicy2(t *testing.T) {
 			Options:     []string{"rbind", "rshared", "ro"},
 		},
 	}
-	
+
 	user := IDName{ID: "0", Name: ""}
 	groups := []IDName{{ID: "0", Name: ""}}
 	capabilities := &oci.LinuxCapabilities{
