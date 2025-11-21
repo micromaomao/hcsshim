@@ -8143,9 +8143,137 @@ func Test_Rego_PlatformRules_InFragment1(t *testing.T) {
 // Test platform rule and container both in separate fragment
 func Test_Rego_PlatformRules_InFragment2(t *testing.T) {
 	f := func(loadPlatformRulesFragmentFirst bool) bool {
-		// todo
-		// basically the above, but load a container from a fragment
-		// order of which fragment is loaded first shouldn't matter (as long as container is created after both loaded)
+		platformFragment := fragment{
+			issuer:     testDataGenerator.uniqueFragmentIssuer(),
+			feed:       "infra",
+			minimumSVN: "1",
+			includes: []string{
+				"platform_rules",
+			},
+		}
+
+		containerFragment := fragment{
+			issuer:     platformFragment.issuer,
+			feed:       "container",
+			minimumSVN: "1",
+			includes: []string{
+				"containers",
+			},
+		}
+
+		gc := &generatedConstraints{
+			ctx:       context.Background(),
+			fragments: []*fragment{&platformFragment, &containerFragment},
+		}
+
+		securityPolicy := gc.toPolicy()
+		defaultMounts := generateMounts(testRand)
+		privilegedMounts := generateMounts(testRand)
+
+		policy, err := newRegoPolicy(securityPolicy.marshalRego(),
+			toOCIMounts(defaultMounts),
+			toOCIMounts(privilegedMounts), testOSType)
+		if err != nil {
+			t.Fatalf("failed to create rego policy: %v", err)
+		}
+
+		// Load fragments in the order specified by the test parameter
+		if loadPlatformRulesFragmentFirst {
+			err = policy.LoadFragment(gc.ctx, platformFragment.issuer, platformFragment.feed, platformRulesFragmentPolicyCode)
+			if err != nil {
+				t.Fatalf("failed to load platform rules fragment: %v", err)
+			}
+			err = policy.LoadFragment(gc.ctx, containerFragment.issuer, containerFragment.feed, paramTestTemplateFragmentCode(containerWithPlatformRulesFragmentPolicyCode))
+			if err != nil {
+				t.Fatalf("failed to load container fragment: %v", err)
+			}
+		} else {
+			err = policy.LoadFragment(gc.ctx, containerFragment.issuer, containerFragment.feed, paramTestTemplateFragmentCode(containerWithPlatformRulesFragmentPolicyCode))
+			if err != nil {
+				t.Fatalf("failed to load container fragment: %v", err)
+			}
+			err = policy.LoadFragment(gc.ctx, platformFragment.issuer, platformFragment.feed, platformRulesFragmentPolicyCode)
+			if err != nil {
+				t.Fatalf("failed to load platform rules fragment: %v", err)
+			}
+		}
+
+		// Mount the container image
+		containerID := testDataGenerator.uniqueContainerID()
+		sandboxID := testDataGenerator.uniqueSandboxID()
+		
+		scratchDisk := getScratchDiskMountTarget(sandboxID)
+		err = policy.EnforceRWDeviceMountPolicy(gc.ctx, scratchDisk, true, true, "xfs")
+		if err != nil {
+			t.Errorf("failed to mount scratch disk: %v", err)
+			return false
+		}
+
+		layerPath := testDataGenerator.uniqueLayerMountTarget()
+		err = policy.EnforceDeviceMountPolicy(gc.ctx, layerPath, paramTestImageBaseLayer)
+		if err != nil {
+			t.Errorf("failed to mount layer: %v", err)
+			return false
+		}
+
+		overlayTarget := getOverlayMountTarget(containerID)
+		err = policy.EnforceOverlayMountPolicy(gc.ctx, containerID, []string{layerPath}, overlayTarget)
+		if err != nil {
+			t.Errorf("failed to mount overlay: %v", err)
+			return false
+		}
+
+		// Create container with platform rules requirements
+		envList := []string{"Fabric_NodeIPOrFqdn=10.0.0.1"}
+		mounts := []oci.Mount{
+			{
+				Source:      fmt.Sprintf("/run/gcs/c/%s/sandboxMounts/tmp/atlas/emptydir/serviceaccount", sandboxID),
+				Destination: "/var/run/secrets/kubernetes.io/serviceaccount",
+				Type:        "bind",
+				Options:     []string{"rbind", "rshared", "ro"},
+			},
+		}
+		
+		user := IDName{ID: "0", Name: ""}
+		groups := []IDName{{ID: "0", Name: ""}}
+		capabilities := &oci.LinuxCapabilities{
+			Ambient:     []string{},
+			Bounding:    []string{},
+			Effective:   []string{},
+			Inheritable: []string{},
+			Permitted:   []string{},
+		}
+
+		envsToKeep, _, _, err := policy.EnforceCreateContainerPolicy(
+			gc.ctx,
+			sandboxID,
+			containerID,
+			[]string{"bash"},
+			envList,
+			"/",
+			mounts,
+			false,
+			false,
+			user,
+			groups,
+			"0022",
+			capabilities,
+			"",
+		)
+
+		// getting an error means something is broken
+		if err != nil {
+			t.Errorf("failed to create container: %v", err)
+			return false
+		}
+
+		slices.Sort(envList)
+		slices.Sort(envsToKeep)
+		if !slices.Equal(envList, envsToKeep) {
+			t.Errorf("expected envs to keep = %v, got %v", envList, envsToKeep)
+			return false
+		}
+
 		return true
 	}
 	if err := quick.Check(f, &quick.Config{MaxCount: 25, Rand: testRand}); err != nil {
@@ -8239,7 +8367,105 @@ func Test_Rego_PlatformRules_InPolicy1(t *testing.T) {
 
 // Test platform rule in main policy, container in fragment
 func Test_Rego_PlatformRules_InPolicy2(t *testing.T) {
-	// todo - basically the above, but load a container from a fragment
+	containerFragment := fragment{
+		issuer:     testDataGenerator.uniqueFragmentIssuer(),
+		feed:       "container",
+		minimumSVN: "1",
+		includes: []string{
+			"containers",
+		},
+	}
+
+	gc := &generatedConstraints{
+		ctx:       context.Background(),
+		fragments: []*fragment{&containerFragment},
+	}
+
+	rego := getPolicyCode_PolicyWithPlatformRules(containerFragment.feed, containerFragment.issuer)
+	defaultMounts := generateMounts(testRand)
+	privilegedMounts := generateMounts(testRand)
+
+	policy, err := newRegoPolicy(rego,
+		toOCIMounts(defaultMounts),
+		toOCIMounts(privilegedMounts), testOSType)
+	if err != nil {
+		t.Fatalf("failed to create rego policy: %v", err)
+	}
+
+	// Load container fragment
+	err = policy.LoadFragment(gc.ctx, containerFragment.issuer, containerFragment.feed, paramTestTemplateFragmentCode(containerWithPlatformRulesFragmentPolicyCode))
+	if err != nil {
+		t.Fatalf("failed to load container fragment: %v", err)
+	}
+
+	// Mount the container image
+	containerID := testDataGenerator.uniqueContainerID()
+	sandboxID := testDataGenerator.uniqueSandboxID()
+	
+	scratchDisk := getScratchDiskMountTarget(sandboxID)
+	err = policy.EnforceRWDeviceMountPolicy(gc.ctx, scratchDisk, true, true, "xfs")
+	if err != nil {
+		t.Fatalf("failed to mount scratch disk: %v", err)
+	}
+
+	layerPath := testDataGenerator.uniqueLayerMountTarget()
+	err = policy.EnforceDeviceMountPolicy(gc.ctx, layerPath, paramTestImageBaseLayer)
+	if err != nil {
+		t.Fatalf("failed to mount layer: %v", err)
+	}
+
+	overlayTarget := getOverlayMountTarget(containerID)
+	err = policy.EnforceOverlayMountPolicy(gc.ctx, containerID, []string{layerPath}, overlayTarget)
+	if err != nil {
+		t.Fatalf("failed to mount overlay: %v", err)
+	}
+
+	// Create container with platform rules requirements
+	envList := []string{"Fabric_NodeIPOrFqdn=10.0.0.1"}
+	mounts := []oci.Mount{
+		{
+			Source:      fmt.Sprintf("/run/gcs/c/%s/sandboxMounts/tmp/atlas/emptydir/serviceaccount", sandboxID),
+			Destination: "/var/run/secrets/kubernetes.io/serviceaccount",
+			Type:        "bind",
+			Options:     []string{"rbind", "rshared", "ro"},
+		},
+	}
+	
+	user := IDName{ID: "0", Name: ""}
+	groups := []IDName{{ID: "0", Name: ""}}
+	capabilities := &oci.LinuxCapabilities{
+		Ambient:     []string{},
+		Bounding:    []string{},
+		Effective:   []string{},
+		Inheritable: []string{},
+		Permitted:   []string{},
+	}
+
+	envsToKeep, _, _, err := policy.EnforceCreateContainerPolicy(
+		gc.ctx,
+		sandboxID,
+		containerID,
+		[]string{"bash"},
+		envList,
+		"/",
+		mounts,
+		false,
+		false,
+		user,
+		groups,
+		"0022",
+		capabilities,
+		"",
+	)
+
+	// getting an error means something is broken
+	if err != nil {
+		t.Fatalf("failed to create container: %v", err)
+	}
+
+	if !slices.Equal(envList, envsToKeep) {
+		t.Errorf("expected envs to keep = %v, got %v", envList, envsToKeep)
+	}
 }
 
 type getUserInfoTestCase struct {
@@ -8356,6 +8582,9 @@ var paramOnCommandPolicyCode string
 
 //go:embed fragment_test_policies/platform_rules.rego
 var platformRulesFragmentPolicyCode string
+
+//go:embed fragment_test_policies/container_with_platform_rules.rego
+var containerWithPlatformRulesFragmentPolicyCode string
 
 //go:embed policy_with_platform_rules.rego
 var policyWithPlatformRules string
