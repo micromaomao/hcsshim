@@ -406,7 +406,230 @@ incorrect OS type could lead to policy bypass.
 
 ---
 
-## 5. Overall Assessment
+## 5. Virtual Pod Mechanism Security Review
+
+The virtual pod mechanism allows multiple Kubernetes pods to share a single UVM.
+It is annotation-driven (`io.microsoft.cri.virtual-pod-id`) and was introduced
+after the enforcement fixes were written.
+
+### 5.1 Container ID Validation for Virtual Pod IDs (GOOD)
+
+Virtual pod IDs are validated with `checkValidContainerID` at container creation
+time (uvm.go line 380-383), requiring the same `[0-9a-fA-F]{64}` format as
+regular container IDs. This prevents path traversal attacks via the
+`virtualPodID` annotation.
+
+**No issues found.**
+
+### 5.2 Path Generation (GOOD, WITH NOTE)
+
+`VirtualPodRootDir` (`internal/guest/spec/spec.go` line 96-102) includes a
+sanitization check:
+```go
+sanitizedID := filepath.Clean(virtualSandboxID)
+if filepath.IsAbs(sanitizedID) || strings.Contains(sanitizedID, "..") {
+    return ""
+}
+```
+This is a defense-in-depth measure. Combined with the container ID regex
+validation, path traversal via virtual pod IDs is prevented.
+
+Virtual pod paths are under `/run/gcs/c/virtual-pods/<virtualPodID>/` rather
+than the standard `/run/gcs/c/<sandboxID>/`. The path functions
+(`VirtualPodMountsDir`, `VirtualPodTmpfsMountsDir`,
+`VirtualPodHugePagesMountsDir`) all derive from `VirtualPodRootDir` and cannot
+escape the intended directory.
+
+**No issues found.**
+
+### 5.3 **FINDING: Policy Sandbox Dir Mismatch with Virtual Pods** (LOW-MEDIUM)
+
+When `EnforceCreateContainerPolicyV2` is called (uvm.go line 601-619), the
+`SandboxID` field in `CreateContainerOptions` is set to the regular `sandboxID`
+(line 602), which for virtual pod workload containers comes from the
+`io.kubernetes.cri.sandbox-id` annotation (line 521-522).
+
+The Rego policy enforcer builds `sandboxDir` and `hugePagesDir` from this
+sandbox ID using `SandboxMountsDir(opts.SandboxID)` (securitypolicyenforcer_rego.go
+line 753-754), which generates paths like `/run/gcs/c/<sandboxID>/sandboxMounts`.
+
+However, the actual sandbox mounts in the UVM are placed at
+`/run/gcs/c/virtual-pods/<virtualPodID>/sandboxMounts` when virtual pods are
+active (via `VirtualPodAwareSandboxMountsDir` in workload_container.go line 60).
+
+This means **the Rego policy's `sandboxDir` input does not match the actual
+mount source paths** for virtual pod containers. The policy might fail to match
+expected sandbox mount patterns, or (more concerning) might inadvertently match
+against a different sandbox's mount directory.
+
+In practice, this may cause sandbox mount policy validation to fail (deny valid
+mounts) rather than pass (allow invalid mounts), since the pattern mismatch
+would make the Rego `mountSource_ok` rule unable to find matching paths. However,
+this warrants verification, because if the `sandboxPrefix` replacement logic in
+Rego is flexible enough, it might match unintended paths.
+
+**Recommendation**: Verify that the `sandboxDir` input to Rego correctly reflects
+the virtual pod's actual mount directory, or confirm that the mount source
+rewriting happens before policy evaluation and the policy sees the final paths.
+
+### 5.4 Virtual Pod CRI Type Override (GOOD, WITH NOTE)
+
+When `isVirtualPod && id == virtualPodID` (line 390), the container is forced to
+`criType = "sandbox"`. This is driven entirely by the host-provided annotations.
+In a confidential context, this means the host can make any container appear as a
+sandbox by setting `VirtualPodID == containerID`.
+
+However, this only affects the GCS's own processing flow (sandbox path setup vs
+workload path setup) — the actual policy enforcement still validates the
+container's spec, mounts, and args against the security policy. The container
+is still subject to `checkContainerSettings`, `EnforceCreateContainerPolicyV2`,
+etc. A sandbox container has a restricted set of operations (it runs the
+"sandbox pause" spec), so treating a container as a sandbox would restrict, not
+expand, what is allowed.
+
+**No issues found**, but note that this mechanism is inherently trust-dependent
+on the policy properly differentiating sandbox vs workload container specs.
+
+### 5.5 Virtual Pod Cgroup Resource Control (INFORMATIONAL)
+
+`CreateVirtualPod` accepts `pSpec.Linux.Resources` from the OCI spec provided by
+the host (uvm.go line 1809-1810) and passes it directly to the cgroup
+controller. The host can control the resource limits (memory, CPU) of the
+virtual pod's cgroup. This is by design — the host already controls resource
+allocation to the UVM. Setting pod-level cgroup limits is a restriction on the
+pod, not an escape mechanism.
+
+The cgroup path uses the validated `virtualSandboxID` (uvm.go line 1805):
+```go
+cgroupPath := path.Join(parentPath, virtualSandboxID)
+```
+Since `virtualSandboxID` is validated as `[0-9a-fA-F]{64}`, there is no path
+traversal risk here.
+
+**No issues found.**
+
+### 5.6 Virtual Pod Cleanup (GOOD)
+
+`RemoveContainerFromVirtualPod` (line 1884) and `cleanupVirtualPod` (line 1920)
+properly clean up state. The cleanup of the last container triggers cgroup
+deletion and network namespace removal. This is called from `RemoveContainer`
+(line 167).
+
+**No issues found.**
+
+---
+
+## 6. BlockDev Device Security Review
+
+The blockdev mechanism allows SCSI devices to be exposed to containers as raw
+block devices (symlinks to `/dev/sdX`) rather than mounted filesystems. It is
+identified by the `blockdev://` mount prefix.
+
+### 6.1 BlockDev Mount Flow
+
+The host sends an `LCOWMappedVirtualDisk` request with `BlockDev: true`. In
+`modifyMappedVirtualDisk` (uvm.go), this is processed the same as any SCSI
+device, flowing through:
+1. Policy enforcement (`EnforceDeviceMountPolicy` or `EnforceRWDeviceMountPolicy`)
+2. `hostMounts` state tracking (`AddRODevice` / `AddRWDevice`)
+3. `scsi.Mount()` — which, for BlockDev, creates a symlink instead of mounting
+
+### 6.2 **FINDING: BlockDev Bypasses Verity and Filesystem Enforcement** (MEDIUM)
+
+When `mvd.ReadOnly == true` and `h.HasSecurityPolicy()` (uvm.go line 1237-1250),
+the code reads the verity superblock and enforces filesystem type. However, when
+`BlockDev` is true, `scsi.Mount()` (scsi.go line 172-181) **skips the actual
+filesystem mount** and just creates a symlink. This means:
+
+1. **The verity info is read but may not be applied.** Although
+   `config.VerityInfo` is set in the `scsi.Config`, the `scsi.Mount` function
+   with `BlockDev: true` short-circuits before the verity target is created (the
+   verity dm target creation happens after the BlockDev check on line 154-168).
+   Wait — actually reviewing more carefully: the verity target IS created before
+   the BlockDev check (lines 154-168 run before line 172). So if `ReadOnly` and
+   `VerityInfo` is set, the verity target IS created, and the symlink on line 181
+   will point to the verity device rather than the raw device. **This is
+   actually correct.**
+
+2. **The filesystem enforcement (`mvd.Filesystem != "" && mvd.Filesystem !=
+   "ext4"`) does not apply** to blockdev mounts since no filesystem is mounted.
+   This is semantically correct — a raw block device has no filesystem mounted.
+
+3. **Mount option enforcement** (the `"ro"` check at uvm.go line 1268-1284)
+   still applies. However, a blockdev symlink is just a symlink — it doesn't
+   have mount options in the traditional sense. The container's access to the
+   block device is controlled by the device cgroup rules set in
+   `updateBlockDeviceMounts` (workload_container.go line 117-154), not by mount
+   options.
+
+**Revised assessment**: The verity path is actually correct. The mount option
+enforcement is somewhat cosmetic for blockdev but doesn't create a bypass.
+
+**No critical issues found.**
+
+### 6.3 **FINDING: BlockDev Symlink as Oracle for Device Paths** (LOW)
+
+When `BlockDev` is true, `scsi.Mount` creates a symlink from `target` to
+`source` (the SCSI device path). Later, `updateBlockDeviceMounts`
+(workload_container.go line 132) calls `os.Readlink(m.Source)` to resolve this
+symlink. The resolved path (the actual `/dev/sdX` device) is then used with
+`devices.DeviceFromPath` to get major/minor numbers for device cgroup rules.
+
+This is fine from a security perspective — the symlink target is always a known
+SCSI device path generated by the GCS itself (via `getDevicePath`). The host
+cannot control the symlink target because:
+- The `source` in `scsi.Mount` comes from `getDevicePath(controller, lun,
+  partition)`, which queries sysfs
+- The `target` path is the host-provided `mvd.MountPath`, but this is validated
+  against the mount path regex by the Rego policy
+
+**No issues found.**
+
+### 6.4 **FINDING: BlockDev Unmount Skips `checkExists`** (LOW)
+
+For unmount of non-blockdev SCSI devices, there is an existence check
+(`checkExists(mvd.MountPath)` at uvm.go line 1396-1403) to ensure the directory
+actually exists before attempting unmount. For blockdev unmounts, `scsi.Unmount`
+(scsi.go line 310-316) just calls `os.RemoveAll(target)` to remove the symlink.
+
+`os.RemoveAll` is a no-op if the target doesn't exist, so there is no error
+case for a non-existent symlink. However, this means the blockdev unmount path
+does not get the mountsBroken treatment when `os.RemoveAll` fails — though
+`os.RemoveAll` failures on a symlink are extremely unlikely.
+
+The `checkExists` guard in the non-blockdev path is specifically designed to
+prevent leaking path existence information to the host. For blockdev symlinks,
+the path is always the host-provided `mvd.MountPath` which was already validated
+by the mount path regex, so this is not a meaningful information leak.
+
+**No issues found.**
+
+### 6.5 BlockDev Device Cgroup Integration (GOOD)
+
+`updateBlockDeviceMounts` (workload_container.go line 117-154) correctly:
+1. Reads the symlink to get the real device path
+2. Gets device major/minor numbers
+3. Derives permissions from mount options (`"ro"` → `"r"`, else `"rwm"`)
+4. Appends to `spec.Linux.Resources.Devices` for cgroup enforcement
+5. Strips the `blockdev://` prefix from the mount destination
+
+The container can only access the block device through the cgroup-controlled
+device node. This is a proper isolation mechanism.
+
+**No issues found.**
+
+### 6.6 BlockDev and Host Mounts Tracking (GOOD)
+
+BlockDev SCSI devices go through the same `hostMounts.AddRODevice` /
+`hostMounts.AddRWDevice` tracking as regular SCSI mounts (uvm.go line
+1295-1330). This means they are properly tracked for overlay in-use checks and
+unmount validation.
+
+**No issues found.**
+
+---
+
+## 7. Overall Assessment
 
 | Area | Rating |
 |------|--------|
@@ -415,8 +638,17 @@ incorrect OS type could lead to policy bypass.
 | Policy enforcer interface changes | ✅ Clean extension |
 | Compatibility with rebased commits | ✅ No conflicts |
 | WCOW gcs-sidecar security | ⚠️ Several gaps identified |
+| Virtual pod mechanism | ✅ Mostly good, one policy sandboxDir mismatch (5.3) |
+| BlockDev device mechanism | ✅ No issues found |
 
 The LCOW changes are solid and address a comprehensive set of security concerns.
 The WCOW gcs-sidecar code would benefit from similar hardening, particularly
 around container ID validation, revertable sections, the mountsBroken fail-closed
 mechanism, and lifecycle checks.
+
+The virtual pod mechanism is generally well-handled. The main concern is the
+`sandboxDir` input to the Rego policy not reflecting the actual virtual pod mount
+directory (Finding 5.3), which should be verified.
+
+The blockdev mechanism correctly leverages existing policy enforcement, verity
+integration, and host mounts tracking. No security bypasses were identified.
