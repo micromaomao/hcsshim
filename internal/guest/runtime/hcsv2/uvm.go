@@ -461,6 +461,18 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 	// devices we dynamically add again.
 	extraLinuxDevices := slices.Clone(settings.OCISpecification.Linux.Devices)
 
+	// Block device mounts (blockdev://) are not expressible in the security
+	// policy. Reject any OCI spec containing blockdev mounts when a security
+	// policy is active, to prevent the host from using this mechanism to
+	// expose raw block devices or create arbitrary paths inside containers.
+	if h.HasSecurityPolicy() {
+		for _, m := range settings.OCISpecification.Mounts {
+			if strings.HasPrefix(m.Destination, guestpath.BlockDevMountPrefix) {
+				return nil, errors.Errorf("block device mount to %q is not supported with security policy enforcement", m.Destination)
+			}
+		}
+	}
+
 	// Normally we would be doing policy checking here at the start of our
 	// "policy gated function". However, we can't for create container as we
 	// need a properly correct sandboxID which might be changed by the code
@@ -1225,6 +1237,15 @@ func (h *Host) modifyMappedVirtualDisk(
 		trace.BoolAttribute("readOnly", mvd.ReadOnly),
 		trace.StringAttribute("mountPath", mvd.MountPath),
 	)
+
+	// Block device mounts (BlockDev) create symlinks to raw SCSI devices
+	// instead of mounting filesystems. There is currently no way to express
+	// block device mounts in the security policy, so we must reject them
+	// when a security policy is active to prevent the host from creating
+	// arbitrary symlinks or exposing raw block devices to containers.
+	if mvd.BlockDev && h.HasSecurityPolicy() {
+		return errors.Errorf("block device mounts are not supported with security policy enforcement")
+	}
 
 	var verityInfo *guestresource.DeviceVerityInfo
 	securityPolicy := h.securityOptions.PolicyEnforcer
