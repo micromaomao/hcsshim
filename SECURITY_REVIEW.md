@@ -534,7 +534,7 @@ device, flowing through:
 2. `hostMounts` state tracking (`AddRODevice` / `AddRWDevice`)
 3. `scsi.Mount()` — which, for BlockDev, creates a symlink instead of mounting
 
-### 6.2 **FINDING: BlockDev Bypasses Verity and Filesystem Enforcement** (MEDIUM)
+### 6.2 BlockDev Verity and Filesystem Enforcement Analysis (GOOD)
 
 When `mvd.ReadOnly == true` and `h.HasSecurityPolicy()` (uvm.go line 1237-1250),
 the code reads the verity superblock and enforces filesystem type. However, when
@@ -567,7 +567,7 @@ enforcement is somewhat cosmetic for blockdev but doesn't create a bypass.
 
 **No critical issues found.**
 
-### 6.3 **FINDING: BlockDev Symlink as Oracle for Device Paths** (LOW)
+### 6.3 BlockDev Symlink Path Resolution (GOOD)
 
 When `BlockDev` is true, `scsi.Mount` creates a symlink from `target` to
 `source` (the SCSI device path). Later, `updateBlockDeviceMounts`
@@ -585,7 +585,7 @@ cannot control the symlink target because:
 
 **No issues found.**
 
-### 6.4 **FINDING: BlockDev Unmount Skips `checkExists`** (LOW)
+### 6.4 BlockDev Unmount Behavior (GOOD)
 
 For unmount of non-blockdev SCSI devices, there is an existence check
 (`checkExists(mvd.MountPath)` at uvm.go line 1396-1403) to ensure the directory
