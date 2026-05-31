@@ -182,6 +182,18 @@ type Bridge struct {
 	// in asyncMessages).
 	ForceSequential bool
 
+	// sequentialMu serializes the processing of mutating (non-async) requests
+	// when ForceSequential is enabled. It is held for the entire duration of a
+	// request handler. Because the same Bridge is reused across reconnects (see
+	// the reconnect loop in cmd/gcs/main.go), this guarantees serialization
+	// across ListenAndServe instances: if a previous connection's handler is
+	// still in-flight when the host drops and re-establishes the connection, the
+	// new connection's handler blocks here until the old one finishes. Without
+	// this, a malicious host could drop the connection mid-request and reconnect
+	// to run two mutating handlers concurrently against shared Host enforcer /
+	// mount state, defeating the ForceSequential confidential hardening.
+	sequentialMu sync.Mutex
+
 	// responseChan is the response channel used for both request/response
 	// and publish notification workflows.
 	responseChan chan bridgeResponse
@@ -450,11 +462,7 @@ func (b *Bridge) ListenAndServe(bridgeIn io.ReadCloser, bridgeOut io.WriteCloser
 		}
 
 		for req := range requestChan {
-			if b.ForceSequential && !alwaysAsyncMessages[req.Header.Type] {
-				runSequentialRequestHandler(req, doOneRequest)
-			} else {
-				go doOneRequest(req)
-			}
+			b.dispatchRequest(req, doOneRequest)
 		}
 	}()
 	// Process each bridge response sync. This channel is for request/response and publish workflows.
@@ -515,6 +523,21 @@ func (b *Bridge) ListenAndServe(bridgeIn io.ReadCloser, bridgeOut io.WriteCloser
 		<-responseErrChan
 		return err
 	}
+}
+
+// dispatchRequest schedules a single bridge request for processing. In
+// ForceSequential mode, mutating (non-async) requests are run synchronously
+// while holding b.sequentialMu, which serializes them across the entire process
+// lifetime (including across reconnects). Async requests, and all requests when
+// ForceSequential is disabled, are run on their own goroutine.
+func (b *Bridge) dispatchRequest(req *Request, handleFn func(*Request)) {
+	if b.ForceSequential && !alwaysAsyncMessages[req.Header.Type] {
+		b.sequentialMu.Lock()
+		defer b.sequentialMu.Unlock()
+		runSequentialRequestHandler(req, handleFn)
+		return
+	}
+	go handleFn(req)
 }
 
 // Do handleFn(r), but prints a warning if handleFn does not, or takes too long

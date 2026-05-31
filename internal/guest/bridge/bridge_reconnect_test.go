@@ -3,7 +3,9 @@
 package bridge
 
 import (
+	"context"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -162,4 +164,79 @@ func TestBridge_FullReconnectCycle(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for drained notification")
 	}
+}
+
+// TestBridge_ForceSequential_SerializesAcrossConnections verifies that, with
+// ForceSequential enabled, a mutating request handler that is still in-flight
+// from a previous connection blocks a mutating handler dispatched from a new
+// (reconnected) connection. This guards against a malicious host dropping the
+// vsock connection mid-request and reconnecting to run two mutating handlers
+// concurrently against shared Host state, which would defeat the sequential
+// confidential hardening.
+func TestBridge_ForceSequential_SerializesAcrossConnections(t *testing.T) {
+b := New(nil, false)
+b.ForceSequential = true
+
+started := make(chan struct{})
+release := make(chan struct{})
+var concurrent atomic.Int32
+var maxConcurrent atomic.Int32
+
+handleFn := func(*Request) {
+n := concurrent.Add(1)
+for {
+old := maxConcurrent.Load()
+if n <= old || maxConcurrent.CompareAndSwap(old, n) {
+break
+}
+}
+started <- struct{}{}
+<-release
+concurrent.Add(-1)
+}
+
+// A mutating (non-async) request type.
+req := &Request{
+	Context: context.Background(),
+	Header:  &prot.MessageHeader{Type: prot.ComputeSystemModifySettingsV1},
+}
+
+// "Connection 1": dispatch a mutating request and wait until its handler is
+// in-flight (holding b.sequentialMu).
+go b.dispatchRequest(req, handleFn)
+<-started
+
+// "Connection 2" (reconnect): dispatch another mutating request while the
+// first handler is still in-flight.
+h2done := make(chan struct{})
+go func() {
+b.dispatchRequest(req, handleFn)
+close(h2done)
+}()
+
+// The second handler must not start while the first holds the lock.
+select {
+case <-started:
+t.Fatal("second handler ran concurrently with the first; cross-connection serialization defeated")
+case <-time.After(200 * time.Millisecond):
+}
+
+// Let the first handler finish; the second may now proceed.
+release <- struct{}{}
+select {
+case <-started:
+case <-time.After(time.Second):
+t.Fatal("second handler did not start after the first was released")
+}
+release <- struct{}{}
+
+select {
+case <-h2done:
+case <-time.After(time.Second):
+t.Fatal("second handler did not complete")
+}
+
+if got := maxConcurrent.Load(); got != 1 {
+t.Fatalf("expected at most 1 concurrent handler, observed %d", got)
+}
 }
