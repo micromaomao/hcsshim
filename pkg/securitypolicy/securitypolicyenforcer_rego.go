@@ -843,6 +843,13 @@ func appendMountData(mountData []interface{}, mounts []oci.Mount) []interface{} 
 	return mountData
 }
 
+func uint32ptrtoany(i *uint32) interface{} {
+	if i == nil {
+		return nil
+	}
+	return *i
+}
+
 func appendDeviceData(deviceData []interface{}, devices []oci.LinuxDevice) []interface{} {
 	for _, device := range devices {
 		deviceData = append(deviceData, inputData{
@@ -851,8 +858,8 @@ func appendDeviceData(deviceData []interface{}, devices []oci.LinuxDevice) []int
 			"major":    device.Major,
 			"minor":    device.Minor,
 			"fileMode": device.FileMode,
-			"uid":      device.UID,
-			"gid":      device.GID,
+			"uid":      uint32ptrtoany(device.UID),
+			"gid":      uint32ptrtoany(device.GID),
 		})
 	}
 
@@ -1245,7 +1252,7 @@ func (policy *regoEnforcer) StartRevertableSection() (RevertableSectionHandle, e
 	if err != nil {
 		err = errors.Wrapf(err, "unable to save metadata for revertable section")
 		policy.revertableSectionLock.Unlock()
-		return &revertableSectionHandle{}, err
+		return nil, err
 	}
 	// Keep policy.revertableSectionLock locked until the end of the section.
 	sh := &revertableSectionHandle{
