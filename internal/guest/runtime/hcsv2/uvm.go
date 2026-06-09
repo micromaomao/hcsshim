@@ -122,11 +122,11 @@ type Host struct {
 	// containers, and is initialized in SetConfidentialUVMOptions.  If this is
 	// nil, we do not do add any special restrictions on mounts / unmounts.
 	hostMounts *hostMounts
-	// A permanent flag to indicate that further mounts, unmounts and container
-	// creation should not be allowed.  This is set when, because of a failure
-	// during an unmount operation, we end up in a state where the policy
-	// enforcer's state is out of sync with what we have actually done, but we
-	// cannot safely revert its state.
+	// mountsBroken is a permanent flag to indicate that further mounts,
+	// unmounts and container creation should not be allowed.  This is set when,
+	// because of a failure during an unmount operation, we end up in a state
+	// where the policy enforcer's state is out of sync with what we have
+	// actually done, but we cannot safely revert its state.
 	//
 	// Not used in non-confidential mode.
 	mountsBroken atomic.Bool
@@ -419,21 +419,22 @@ func (h *Host) setMountsBrokenIfConfidential(cause string) {
 	if !h.HasSecurityPolicy() {
 		return
 	}
-	h.mountsBroken.Store(true)
+	// write cause before atomic store of the bool below so that cause is never nil when the flag is set.
 	h.mountsBrokenCausedBy = cause
+	h.mountsBroken.Store(true)
 	log.G(context.Background()).WithFields(logrus.Fields{
 		"cause": cause,
 	}).Error("Host::mountsBroken set to true. All further mounts/unmounts, container creation and deletion will fail.")
 }
 
-func checkExists(path string) (error, bool) {
+func checkExists(path string) (bool, error) {
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			return nil, false
+			return false, nil
 		}
-		return errors.Wrapf(err, "failed to determine if path '%s' exists", path), false
+		return false, errors.Wrapf(err, "failed to determine if path '%s' exists", path)
 	}
-	return nil, true
+	return true, nil
 }
 
 func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VMHostedContainerSettingsV2) (_ *Container, err error) {
@@ -1445,7 +1446,7 @@ func (h *Host) modifyMappedVirtualDisk(
 			// find out whether an arbitrary path (which may point to sensitive
 			// data within a container rootfs) exists or not
 			if h.HasSecurityPolicy() {
-				err, exists := checkExists(mvd.MountPath)
+				exists, err := checkExists(mvd.MountPath)
 				if err != nil {
 					return err
 				}
@@ -1579,7 +1580,7 @@ func (h *Host) modifyMappedVPMemDevice(ctx context.Context,
 		// Similar to the reasoning in modifyMappedVirtualDisk, we should not do
 		// this check before calling the policy enforcer.
 		if h.HasSecurityPolicy() {
-			err, exists := checkExists(vpd.MountPath)
+			exists, err := checkExists(vpd.MountPath)
 			if err != nil {
 				return err
 			}
