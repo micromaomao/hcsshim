@@ -684,6 +684,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		Capabilities:         settings.OCISpecification.Process.Capabilities,
 		SeccompProfileSHA256: seccomp,
 		LinuxDevices:         extraLinuxDevices,
+		IsSandboxContainer:   c.isSandbox,
 	}
 	envToKeep, capsToKeep, allowStdio, err := h.securityOptions.PolicyEnforcer.EnforceCreateContainerPolicyV2(
 		ctx,

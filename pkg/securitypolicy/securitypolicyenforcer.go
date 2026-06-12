@@ -30,6 +30,9 @@ type CreateContainerOptions struct {
 	Capabilities         *oci.LinuxCapabilities
 	SeccompProfileSHA256 string
 	LinuxDevices         []oci.LinuxDevice
+	// IsSandboxContainer is true when the container being created is the cri
+	// pod sandbox container (usually it is the "pause" image).
+	IsSandboxContainer bool
 }
 type SignalContainerOptions struct {
 	IsInitProcess bool
