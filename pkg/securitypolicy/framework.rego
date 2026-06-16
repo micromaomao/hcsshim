@@ -1226,6 +1226,9 @@ fragment_external_processes := data[input.namespace].external_processes
 default fragment_platform_rules := []
 fragment_platform_rules := data[input.namespace].platform_rules
 
+default fragment_transparency_trust_lists := []
+fragment_transparency_trust_lists := data[input.namespace].transparency_trust_lists
+
 apply_defaults(name, raw_values, framework_version) := values {
     semver.compare(framework_version, version) == 0
     values := raw_values
@@ -1261,13 +1264,26 @@ apply_defaults("fragment", raw_values, framework_version) := values {
 apply_defaults("platform_rules", raw_values, framework_version) := values {
     semver.compare(framework_version, version) < 0
     semver.compare(framework_version, "0.5.0") >= 0
-    # This is currently unreachable, otherwise we would call something like
-    # check_platform_rule here, like above (not defined yet).
     values := raw_values
 }
 
 apply_defaults("platform_rules", raw_values, framework_version) := values {
     semver.compare(framework_version, "0.5.0") < 0
+    values := []
+}
+
+# transparency_trust_lists is introduced in framework version 0.5.0.  If an old
+# policy has it, silently ignore as it might be using the name for something
+# else.
+
+apply_defaults("transparency_trust_lists", raw_values, framework_version) := values {
+    semver.compare(framework_version, version) < 0
+    semver.compare(framework_version, "0.6.0") >= 0
+    values := raw_values
+}
+
+apply_defaults("transparency_trust_lists", raw_values, framework_version) := values {
+    semver.compare(framework_version, "0.6.0") < 0
     values := []
 }
 
@@ -1281,6 +1297,7 @@ extract_fragment_includes(includes) := fragment {
         "fragments": apply_defaults("fragment", fragment_fragments, framework_version),
         "external_processes": apply_defaults("external_process", fragment_external_processes, framework_version),
         "platform_rules": apply_defaults("platform_rules", fragment_platform_rules, framework_version),
+        "transparency_trust_lists": apply_defaults("transparency_trust_lists", fragment_transparency_trust_lists, framework_version),
     }
 
     fragment := {
@@ -1523,6 +1540,54 @@ load_fragment := {"metadata": array.concat([updateIssuer], updateParameters), "a
     ]
 
     add_module := "namespace" in fragment.includes
+}
+
+# transparency_trust_lists declares which signed Transparency Trust Lists (TTLs)
+# the policy is willing to accept, and which ledgers each such TTL may
+# contribute keys for.  Like candidate_fragments, the candidate set is the union
+# of the top-level policy's transparency_trust_lists and any contributed by
+# already-loaded fragments that included "transparency_trust_lists".
+default policy_transparency_trust_lists := []
+policy_transparency_trust_lists := data.policy.transparency_trust_lists
+
+candidate_transparency_trust_lists := roots {
+    fragment_roots := [r |
+        feed := data.metadata.issuers[_].feeds[_]
+        fragment := feed[_]
+        r := fragment.transparency_trust_lists[_]
+    ]
+
+    roots := array.concat(policy_transparency_trust_lists, fragment_roots)
+}
+
+# The set of ledger names a matching transparency root authorizes for the given
+# (issuer, subject, svn).  "*" is a wildcard meaning "any ledger".
+ttl_allowed_ledgers_for_issuer_subject_svn(issuer, subject, svn) := allowed_ledgers {
+    allowed_ledgers := {l |
+        ttl := candidate_transparency_trust_lists[_]
+        ttl.issuer == issuer
+        ttl.subject == subject
+        svn_ok(svn, ttl.minimum_svn)
+        l := ttl.allowed_ledgers[_]
+    }
+}
+
+intersect_or_allow_all_if_wildcard(allowed_ledgers, input_ledgers) := result {
+    not "*" in allowed_ledgers
+    result := {l | l := input_ledgers[_]; l in allowed_ledgers}
+}
+
+intersect_or_allow_all_if_wildcard(allowed_ledgers, input_ledgers) := result {
+    "*" in allowed_ledgers
+    result := {l | l := input_ledgers[_]}
+}
+
+default load_transparency_trust_list := {"allowed": false}
+
+load_transparency_trust_list := {"allowed": true, "allowed_ledgers": allowed_ledgers} {
+    root_ledgers := ttl_allowed_ledgers_for_issuer_subject_svn(input.issuer, input.subject, input.svn)
+    allowed_ledgers := intersect_or_allow_all_if_wildcard(root_ledgers, input.ledgers)
+    count(allowed_ledgers) > 0
 }
 
 default scratch_mount := {"allowed": false}
@@ -2226,6 +2291,25 @@ errors["missing fragment svn in either header or rego payload"] {
     fragment_feed_matches
     input.fragment_loaded
     missing_svn
+}
+
+default transparency_root_matches := false
+
+transparency_root_matches {
+    some ttl in candidate_transparency_trust_lists
+    ttl.issuer == input.issuer
+    ttl.subject == input.subject
+    svn_ok(input.svn, ttl.minimum_svn)
+}
+
+errors["no transparency root matches the trust list issuer, subject and svn"] {
+    input.rule == "load_transparency_trust_list"
+    not transparency_root_matches
+}
+
+errors["transparency trust list carries no ledgers authorized by any transparency root"] {
+    input.rule == "load_transparency_trust_list"
+    transparency_root_matches
 }
 
 errors["scratch already mounted at path"] {
