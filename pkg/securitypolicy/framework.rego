@@ -112,6 +112,14 @@ rw_unmount_device := {"metadata": [removeRWDevice], "allowed": true} {
     }
 }
 
+# blockdev mounts (which are symlinks created at the mount point pointing to
+# /dev/sdX instead of an actual mounted filesystem) are not supported on C-ACI
+# and thus the framework currently denies them unconditionally.
+
+default mount_blockdev := {"allowed": false}
+
+default unmount_blockdev := {"allowed": false}
+
 layerPaths_ok(layers) {
     length := count(layers)
     count(input.layerPaths) == length
@@ -138,32 +146,40 @@ overlay_mounted(target) {
     data.metadata.overlayTargets[target]
 }
 
-default candidate_containers := []
+# Note that a valid policy might not even define (data.policy.)containers, if
+# all its containers are coming from fragments.  This default rule prevents
+# breaking other rules in this case.
+default policy_containers := []
 
-candidate_containers := containers {
+policy_containers := pc {
     semver.compare(policy_framework_version, version) == 0
+    pc := data.policy.containers
+}
 
-    policy_containers := [c | c := data.policy.containers[_]]
-    fragment_containers := [c |
-        feed := data.metadata.issuers[_].feeds[_]
-        fragment := feed[_]
-        c := fragment.containers[_]
-    ]
-
-    containers := array.concat(policy_containers, fragment_containers)
+policy_containers := pc {
+    semver.compare(policy_framework_version, version) < 0
+    pc := apply_defaults("container", data.policy.containers, policy_framework_version)
 }
 
 candidate_containers := containers {
-    semver.compare(policy_framework_version, version) < 0
-
-    policy_containers := apply_defaults("container", data.policy.containers, policy_framework_version)
     fragment_containers := [c |
         feed := data.metadata.issuers[_].feeds[_]
         fragment := feed[_]
         c := fragment.containers[_]
     ]
 
-    containers := array.concat(policy_containers, fragment_containers)
+    containers_raw := array.concat(policy_containers, fragment_containers)
+
+    # Each container definition applied with platform_rules might turn into
+    # multiple containers if multiple platforms are allowed.  We flatten the
+    # result here.
+    after_platform_rules := [c2 |
+        c1 := containers_raw[_]
+        applied := apply_platform_rules("container", c1)
+        c2 := applied[_]
+    ]
+
+    containers := after_platform_rules
 }
 
 default mount_cims := {"allowed": false}
@@ -234,32 +250,84 @@ command_ok(command) {
     }
 }
 
-env_ok(pattern, "string", value) {
+# A env rule can be of two form:
+# {
+#   "pattern": "name=value",
+#   "strategy": "string" | "re2"
+# }
+# or
+# {
+#   "name": "name_pattern",
+#   "name_strategy": "string" | "re2",
+#   "value": "value_pattern",
+#   "value_strategy": "string" | "re2"
+# }
+
+# env_pattern_ok(pattern, strategy, value) tests whether the given string
+# pattern matches the input value.
+
+env_pattern_ok(pattern, "string", value) {
     pattern == value
 }
 
-env_ok(pattern, "re2", value) {
+env_pattern_ok(pattern, "re2", value) {
     regex.match(anchor_pattern(pattern), value)
 }
 
-rule_ok(rule, env) {
+# env_rule_ok accepts both forms of env rules described above, and matches it
+# against the given env string (of form name=value).
+
+env_rule_ok(rule, env) {
+    pattern := object.get(rule, "pattern", null)
+    strategy := object.get(rule, "strategy", null)
+    pattern != null
+    strategy != null
+    env_pattern_ok(pattern, strategy, env)
+}
+
+env_rule_ok(rule, env) {
+    rule_name := object.get(rule, "name", null)
+    name_strategy := object.get(rule, "name_strategy", null)
+    rule_value := object.get(rule, "value", null)
+    value_strategy := object.get(rule, "value_strategy", null)
+    rule_name != null
+    name_strategy != null
+    rule_value != null
+    value_strategy != null
+
+    # Split the env into name and value (value can contain '=', name cannot)
+    eq_idx := indexof(env, "=")
+    eq_idx >= 0
+    env_name := substring(env, 0, eq_idx)
+    env_value := substring(env, eq_idx + 1, -1)
+
+    env_pattern_ok(rule_name, name_strategy, env_name)
+    env_pattern_ok(rule_value, value_strategy, env_value)
+}
+
+# For a required env rule, check that envList contains a matching env var for
+# it.
+env_required_rule_ok(rule, envList) {
+    rule.required
+    some env in envList
+    env_rule_ok(rule, env)
+}
+
+# If it's not required, skip the check
+env_required_rule_ok(rule, envList) {
     not rule.required
 }
 
-rule_ok(rule, env) {
-    rule.required
-    env_ok(rule.pattern, rule.strategy, env)
-}
-
 envList_ok(env_rules, envList) {
+    # Check that all required rules are satisfied
     every rule in env_rules {
-        some env in envList
-        rule_ok(rule, env)
+        env_required_rule_ok(rule, envList)
     }
 
+    # Check that any env provided is allowed
     every env in envList {
         some rule in env_rules
-        env_ok(rule.pattern, rule.strategy, env)
+        env_rule_ok(rule, env)
     }
 }
 
@@ -267,7 +335,7 @@ valid_envs_subset(env_rules) := envs {
     envs := {env |
         some env in input.envList
         some rule in env_rules
-        env_ok(rule.pattern, rule.strategy, env)
+        env_rule_ok(rule, env)
     }
 }
 
@@ -386,6 +454,14 @@ seccomp_ok(seccomp_profile_sha256) {
 
 seccomp_ok(seccomp_profile_sha256) {
     is_windows
+}
+
+devices_ok(expected_devices, actual_devices) {
+    # Allow out of order but not duplicates
+    set_expected := {dev | dev := expected_devices[_]}
+    set_actual := {dev | dev := actual_devices[_]}
+    set_expected == set_actual
+    count(set_actual) == count(actual_devices)
 }
 
 default container_started := false
@@ -599,6 +675,8 @@ create_container := {"metadata": [updateMatches, addStarted],
         command_ok(container.command)
         mountList_ok(container.mounts, container.allow_elevated)
         seccomp_ok(container.seccomp_profile_sha256)
+        # We do not support adding device nodes to the policy yet
+        devices_ok([], input.devices)
     ]
 
     count(possible_after_initial_containers) > 0
@@ -1129,17 +1207,24 @@ runtime_logging := {"allowed": true} {
     allow_runtime_logging
 }
 
-default fragment_containers := []
+# Helpers to get data from the fragment that is currently being loaded.  Since
+# input.namespace is the package name the fragment loaded as,
+# data[input.namespace] can be used to access the fragment.  This is only valid
+# during a load_fragment call - the content exported by the fragment needs to be
+# persisted into the metadata for later enforcement use.  (c.f.
+# extract_fragment_includes)
 
+default fragment_containers := []
 fragment_containers := data[input.namespace].containers
 
 default fragment_fragments := []
-
 fragment_fragments := data[input.namespace].fragments
 
 default fragment_external_processes := []
-
 fragment_external_processes := data[input.namespace].external_processes
+
+default fragment_platform_rules := []
+fragment_platform_rules := data[input.namespace].platform_rules
 
 apply_defaults(name, raw_values, framework_version) := values {
     semver.compare(framework_version, version) == 0
@@ -1170,6 +1255,22 @@ apply_defaults("fragment", raw_values, framework_version) := values {
     ]
 }
 
+# platform_rules is introduced in framework version 0.5.0.  If an old policy has it,
+# silently ignore as it might be using the name for something else.
+
+apply_defaults("platform_rules", raw_values, framework_version) := values {
+    semver.compare(framework_version, version) < 0
+    semver.compare(framework_version, "0.5.0") >= 0
+    # This is currently unreachable, otherwise we would call something like
+    # check_platform_rule here, like above (not defined yet).
+    values := raw_values
+}
+
+apply_defaults("platform_rules", raw_values, framework_version) := values {
+    semver.compare(framework_version, "0.5.0") < 0
+    values := []
+}
+
 default fragment_framework_version := null
 fragment_framework_version := data[input.namespace].framework_version
 
@@ -1178,13 +1279,36 @@ extract_fragment_includes(includes) := fragment {
     objects := {
         "containers": apply_defaults("container", fragment_containers, framework_version),
         "fragments": apply_defaults("fragment", fragment_fragments, framework_version),
-        "external_processes": apply_defaults("external_process", fragment_external_processes, framework_version)
+        "external_processes": apply_defaults("external_process", fragment_external_processes, framework_version),
+        "platform_rules": apply_defaults("platform_rules", fragment_platform_rules, framework_version),
     }
 
     fragment := {
         include: objects[include] | include := includes[_]
     }
 }
+
+# data.metadata.issuers is a map of maps that contains information loaded from fragments:
+# {
+#   "did:issuer_1...": {
+#     "feeds": {
+#       "feed1": [
+#         {
+#           // The extracted "includes" for a fragment with this issuer and feed, e.g.:
+#           "containers": [...],
+#           "fragments": [...],
+#         },
+#         // if multiple fragments with the same issuer and feed exists, they go here
+#       ]
+#     }
+#   }
+# }
+#
+# Rules like candidate_containers and candidate_fragments will read this map to
+# gather all the allowed containers / nested fragments.
+#
+# This map does not contain any containers / fragments allowed by the top-level
+# policy itself.  The candidate_* rules need to combine both sources.
 
 issuer_exists(iss) {
     data.metadata.issuers[iss]
@@ -1216,25 +1340,80 @@ update_issuer(includes) := issuer {
     issuer := {"feeds": {input.feed: [extract_fragment_includes(includes)]}}
 }
 
-default candidate_fragments := []
+# The policy might not define the fragments variable, in which case we default
+# to [] to prevent breaking other rules.
+default policy_fragments := []
 
-candidate_fragments := fragments {
+policy_fragments := pf {
     semver.compare(policy_framework_version, version) == 0
+    pf := data.policy.fragments
+}
 
-    policy_fragments := [f | f := data.policy.fragments[_]]
-    fragment_fragments := [f |
-        feed := data.metadata.issuers[_].feeds[_]
-        fragment := feed[_]
-        f := fragment.fragments[_]
+policy_fragments := pf {
+    semver.compare(policy_framework_version, version) < 0
+    pf := apply_defaults("fragment", data.policy.fragments, policy_framework_version)
+}
+
+# data.metadata.fragment_parameters is a set of {issuer, feed, parameters}
+# objects, representing possible parameters for nested fragments.  (There can be
+# duplicate issuer and feeds, All possible parameters will be tried on load of
+# the respective fragment.)
+# [
+#   {
+#     "issuer": "did:issuer_1...",
+#     "feed": "feed1",
+#     "parameters": {
+#       "foo": "foo_standard",
+#       "bar": "bar_standard",
+#     }
+#   },
+#   {
+#     "issuer": "did:issuer_1...",
+#     "feed": "feed1",
+#     "parameters": {
+#       "foo": "foo_premium",
+#       "bar": "bar_premium",
+#     }
+#   },
+#   {
+#     "issuer": "did:issuer_2...",
+#     "feed": "feed2",
+#     "parameters": {
+#       ...
+#     }
+#   }
+# ]
+#
+# This set does not contains any parameters specified by the top-level policy.
+# Readers must combine both sources.
+#
+# Note that although both the issuers map and the fragment_parameters set are
+# updated during fragment load, issuers represents the information extracted
+# from _already loaded_ fragments (and hence it will only contain (issuer, feed)
+# pairs which the host has injected a fragment for).  The fragment_parameters
+# set represents what parameters to use when a fragment is loaded later on, so
+# it contains (issuer, feed) pairs for not-yet-loaded fragments.
+
+default fragment_parameters_for(_, _) := []
+
+fragment_parameters_for(iss, feed) := params {
+    params_nested := [
+        p.parameters
+        | p := data.metadata.fragment_parameters[_]
+          p.issuer == iss
+          p.feed == feed
     ]
-
-    fragments := array.concat(policy_fragments, fragment_fragments)
+    params_policy := [
+        p.parameters
+        | p := policy_fragments[_]
+          p.issuer == iss
+          p.feed == feed
+          p.parameters
+    ]
+    params := array.concat(params_nested, params_policy)
 }
 
 candidate_fragments := fragments {
-    semver.compare(policy_framework_version, version) < 0
-
-    policy_fragments := apply_defaults("fragment", data.policy.fragments, policy_framework_version)
     fragment_fragments := [f |
         feed := data.metadata.issuers[_].feeds[_]
         fragment := feed[_]
@@ -1270,13 +1449,14 @@ default load_fragment := {"allowed": false}
 # point we can check the SVN defined in the fragment is valid, and if
 # successful, add the fragment to the metadata.
 
-load_fragment := {"allowed": true} {
+load_fragment := {"allowed": true, "parameters": possibleParams} {
     not input.fragment_loaded
     some fragment in candidate_fragments
     fragment_issuer_feed_ok(fragment)
+    possibleParams := fragment_parameters_for(fragment.issuer, fragment.feed)
 }
 
-load_fragment := {"metadata": [updateIssuer], "add_module": add_module, "allowed": true} {
+load_fragment := {"metadata": array.concat([updateIssuer], updateParameters), "add_module": add_module, "allowed": true} {
     input.fragment_loaded
     some fragment in candidate_fragments
     fragment_issuer_feed_ok(fragment)
@@ -1289,6 +1469,22 @@ load_fragment := {"metadata": [updateIssuer], "add_module": add_module, "allowed
         "key": input.issuer,
         "value": issuer,
     }
+
+    updateParameters := [
+        {
+            "name": "fragment_parameters",
+            "type": "set",
+            "action": "add",
+            "value": fp,
+        }
+        | fragment := fragment_fragments[_]
+          fragment.parameters
+          fp := {
+              "issuer": fragment.issuer,
+              "feed": fragment.feed,
+              "parameters": fragment.parameters
+          }
+    ]
 
     add_module := "namespace" in fragment.includes
 }
@@ -1443,6 +1639,75 @@ registry_changes := {"allowed": true} {
     }
 }
 
+default policy_platform_rules := []
+
+policy_platform_rules := platform_rules {
+    semver.compare(policy_framework_version, version) == 0
+    platform_rules := data.policy.platform_rules
+}
+
+# For policy with framework_version < 0.5.0, apply_defaults will ignore
+# platform_rules and return [].
+
+policy_platform_rules := platform_rules {
+    semver.compare(policy_framework_version, version) < 0
+    platform_rules := apply_defaults("platform_rules", data.policy.platform_rules, policy_framework_version)
+}
+
+default candidate_platform_rules := []
+
+candidate_platform_rules := platform_rules {
+    fragment_platform_rules := [r |
+        feed := data.metadata.issuers[_].feeds[_]
+        fragment := feed[_]
+        r := fragment.platform_rules[_]
+    ]
+
+    platform_rules := array.concat(policy_platform_rules, fragment_platform_rules)
+}
+
+# apply_platform_rules("container", c) applies "platform_rules" to the container
+# object c, and returns a list of containers which are the input container with
+# platform rules applied.  The return value may contain more than one container
+# if multiple platform rules are defined.
+
+# No platform rules - return as-is.
+apply_platform_rules("container", container) := updated_containers {
+    count(candidate_platform_rules) == 0
+    updated_containers := [container]
+}
+
+apply_platform_rules("container", container) := updated_containers {
+    count(candidate_platform_rules) > 0
+    updated_containers := [updated_container |
+        platform_rule := candidate_platform_rules[_]
+        updated_container := apply_single_platform_rule("container", container, platform_rule)
+    ]
+}
+
+apply_single_platform_rule("container", container, platform_rule) := updated_container {
+    container_env_rules := object.get(container, "env_rules", [])
+    updated_env_rules := array.concat(container_env_rules, object.get(platform_rule, "env_rules", []))
+
+    container_mounts := object.get(container, "mounts", [])
+    updated_mounts := array.concat(container_mounts, object.get(platform_rule, "mounts", []))
+
+    updated_container := object.union(container, {
+        "env_rules": updated_env_rules,
+        "mounts": updated_mounts,
+    })
+}
+
+# This is a helper function that will be used by the parameter() function
+# injected into fragments, and is not otherwise intended to be called by user
+# directly.
+
+extract_parameter(name, fragment_parameters_obj, parameters_metadata) := fragment_parameters_obj[name] {
+	name in object.keys(fragment_parameters_obj)
+} else := parameters_metadata[name]["default"] {
+	"default" in object.keys(parameters_metadata[name])
+}
+
 reason := {
     "errors": errors,
     "error_objects": error_objects
@@ -1451,6 +1716,10 @@ reason := {
 ################################################################
 # Error messages
 ################################################################
+
+errors["blockdev mounts are not supported"] {
+    input.rule in ["mount_blockdev", "unmount_blockdev"]
+}
 
 errors["deviceHash not found"] {
     input.rule == "mount_device"
@@ -1584,14 +1853,14 @@ env_matches(env) {
     input.rule in ["create_container", "exec_in_container"]
     some container in data.metadata.matches[input.containerID]
     some rule in container.env_rules
-    env_ok(rule.pattern, rule.strategy, env)
+    env_rule_ok(rule, env)
 }
 
 env_matches(env) {
     input.rule in ["exec_external"]
     some process in candidate_external_processes
     some rule in process.env_rules
-    env_ok(rule.pattern, rule.strategy, env)
+    env_rule_ok(rule, env)
 }
 
 errors[envError] {
@@ -1609,7 +1878,7 @@ errors[envError] {
 
 env_rule_matches(rule) {
     some env in input.envList
-    env_ok(rule.pattern, rule.strategy, env)
+    env_rule_ok(rule, env)
 }
 
 errors["missing required environment variable"] {
@@ -1701,6 +1970,27 @@ errors["missing required environment variable"] {
     ]
 
     count(processes) > 0
+}
+
+# All environment variables matches some rule in some container, but there are
+# no containers with exactly the given combination of rules (i.e. for every
+# container, there is at least one mismatching rule).
+errors["invalid env list"] {
+    input.rule in ["create_container"]
+
+    every container in data.metadata.matches[input.containerID] {
+        noNewPrivileges_ok(container.no_new_privileges)
+        user_ok(container.user)
+        privileged_ok(container.allow_elevated)
+        workingDirectory_ok(container.working_dir)
+        command_ok(container.command)
+        mountList_ok(container.mounts, container.allow_elevated)
+
+        some env_in in input.envList
+        every rule in container.env_rules {
+            not env_rule_ok(rule, env_in)
+        }
+    }
 }
 
 default workingDirectory_matches := false
@@ -2124,6 +2414,12 @@ errors["capabilities don't match"] {
     count(possible_after_caps_containers) == 0
 }
 
+errors["devices not supported"] {
+    is_linux
+    input.rule == "create_container"
+    not devices_ok([], input.devices)
+}
+
 # covers exec_in_container as well. it shouldn't be possible to ever get
 # an exec_in_container as it "inherits" capabilities rules from create_container
 errors["containers only distinguishable by capabilties"] {
@@ -2331,6 +2627,15 @@ check_fragment(raw_fragment, framework_version) := fragment {
         "feed": raw_fragment.feed,
         "minimum_svn": raw_fragment.minimum_svn,
         "includes": raw_fragment.includes,
+
+        # The "parameters" field was added in 0.3.2, but we really do not want
+        # to silently ignore it if is provided in a policy mistakenly using an
+        # older framework_version, since it is restrictive.  Therefore, instead
+        # of doing a check_fragment_parameters function which returns {} if the
+        # policy's framework_version is lower, we simply do an object.get to
+        # default it, but set the value if it exists.
+        "parameters": object.get(raw_fragment, "parameters", {}),
+
         # Additional fields need to have default logic applied
     }
 }
