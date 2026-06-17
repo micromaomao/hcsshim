@@ -32,6 +32,7 @@ type CreateContainerOptions struct {
 	// IsSandboxContainer is true when the container being created is the cri
 	// pod sandbox container (usually it is the "pause" image).
 	IsSandboxContainer bool
+	LinuxDevices       []oci.LinuxDevice
 }
 type SignalContainerOptions struct {
 	IsInitProcess bool
@@ -63,8 +64,10 @@ func init() {
 type SecurityPolicyEnforcer interface {
 	EnforceDeviceMountPolicy(ctx context.Context, target string, deviceHash string) (err error)
 	EnforceRWDeviceMountPolicy(ctx context.Context, target string, encrypted, ensureFilesystem bool, filesystem string) (err error)
+	EnforceMountBlockDevicePolicy(ctx context.Context, target string) (err error)
 	EnforceDeviceUnmountPolicy(ctx context.Context, unmountTarget string) (err error)
 	EnforceRWDeviceUnmountPolicy(ctx context.Context, unmountTarget string) (err error)
+	EnforceUnmountBlockDevicePolicy(ctx context.Context, unmountTarget string) (err error)
 	EnforceOverlayMountPolicy(ctx context.Context, containerID string, layerPaths []string, target string) (err error)
 	EnforceOverlayUnmountPolicy(ctx context.Context, target string) (err error)
 	EnforceCreateContainerPolicy(
@@ -211,11 +214,19 @@ func (OpenDoorSecurityPolicyEnforcer) EnforceRWDeviceMountPolicy(context.Context
 	return nil
 }
 
+func (OpenDoorSecurityPolicyEnforcer) EnforceMountBlockDevicePolicy(context.Context, string) error {
+	return nil
+}
+
 func (OpenDoorSecurityPolicyEnforcer) EnforceDeviceUnmountPolicy(context.Context, string) error {
 	return nil
 }
 
 func (OpenDoorSecurityPolicyEnforcer) EnforceRWDeviceUnmountPolicy(context.Context, string) error {
+	return nil
+}
+
+func (OpenDoorSecurityPolicyEnforcer) EnforceUnmountBlockDevicePolicy(context.Context, string) error {
 	return nil
 }
 
@@ -344,12 +355,20 @@ func (ClosedDoorSecurityPolicyEnforcer) EnforceRWDeviceMountPolicy(context.Conte
 	return errors.New("Read-write device mounting is denied by policy")
 }
 
+func (ClosedDoorSecurityPolicyEnforcer) EnforceMountBlockDevicePolicy(context.Context, string) error {
+	return errors.New("block-device mounting is denied by policy")
+}
+
 func (ClosedDoorSecurityPolicyEnforcer) EnforceDeviceUnmountPolicy(context.Context, string) error {
 	return errors.New("unmounting is denied by policy")
 }
 
 func (ClosedDoorSecurityPolicyEnforcer) EnforceRWDeviceUnmountPolicy(context.Context, string) error {
 	return errors.New("Read-write device unmounting is denied by policy")
+}
+
+func (ClosedDoorSecurityPolicyEnforcer) EnforceUnmountBlockDevicePolicy(context.Context, string) error {
+	return errors.New("block-device unmounting is denied by policy")
 }
 
 func (ClosedDoorSecurityPolicyEnforcer) EnforceOverlayMountPolicy(context.Context, string, []string, string) error {
